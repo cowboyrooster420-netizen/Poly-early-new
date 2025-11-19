@@ -1,0 +1,285 @@
+// Prisma Schema for Polymarket Insider Bot
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+  previewFeatures = ["fullTextSearch"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// Markets - Polymarket markets being monitored
+// ============================================================================
+
+model Market {
+  id           String   @id
+  question     String
+  slug         String   @unique
+  conditionId  String   @unique
+
+  // Market metrics
+  openInterest Decimal  @db.Decimal(20, 2)
+  volume       Decimal  @db.Decimal(20, 2)
+
+  // Status flags
+  active       Boolean  @default(true)
+  closed       Boolean  @default(false)
+  enabled      Boolean  @default(true) // Monitoring enabled
+
+  // Categorization
+  category     String? // politics, corporate, sports, misc
+  tier         Int     @default(1) // 1 = highest priority
+
+  // Metadata
+  description  String?
+  endDate      DateTime?
+  notes        String?
+
+  // Timestamps
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  trades       Trade[]
+  dormancyMetrics DormancyMetrics?
+  alerts       Alert[]
+
+  @@index([active, enabled])
+  @@index([category, tier])
+  @@index([createdAt])
+  @@map("markets")
+}
+
+// ============================================================================
+// Trades - All trades on monitored markets
+// ============================================================================
+
+model Trade {
+  id          String   @id
+  marketId    String
+  market      Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  // Trade details
+  side        String   // buy, sell
+  size        Decimal  @db.Decimal(20, 2)
+  price       Decimal  @db.Decimal(10, 8)
+  outcome     String   // yes, no
+
+  // Participants
+  maker       String
+  taker       String
+
+  // Timing
+  timestamp   DateTime
+  createdAt   DateTime @default(now())
+
+  // Relations
+  alerts      Alert[]
+
+  @@index([marketId, timestamp])
+  @@index([maker])
+  @@index([taker])
+  @@index([timestamp])
+  @@index([size])
+  @@map("trades")
+}
+
+// ============================================================================
+// Wallets - On-chain wallet analysis and fingerprinting
+// ============================================================================
+
+model Wallet {
+  address      String   @id
+
+  // Funding analysis
+  fundingSource String? // coinbase, binance, kraken, gemini, okx, kucoin, unknown
+
+  // Transaction metrics
+  transactionCount     Int      @default(0)
+  firstTransactionAt   DateTime?
+  lastTransactionAt    DateTime?
+  walletAgeInDays      Int?
+
+  // Flow analysis
+  netflowToPolymarket  Decimal  @db.Decimal(20, 2) @default(0)
+  netflowPercentage    Decimal  @db.Decimal(5, 2)  @default(0)
+
+  // Activity flags
+  hasDefiActivity      Boolean  @default(false)
+  hasGamingActivity    Boolean  @default(false)
+  tokenDiversity       Int      @default(0)
+
+  // Insider scoring
+  matchesInsiderProfile Boolean @default(false)
+  score                 Int      @default(0) // 0-100
+
+  // Analysis metadata
+  lastAnalyzedAt       DateTime @default(now())
+  analysisVersion      String   @default("1.0")
+
+  // Raw data cache (for debugging)
+  rawData              Json?
+
+  // Timestamps
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  // Relations
+  alerts               Alert[]
+
+  @@index([fundingSource])
+  @@index([matchesInsiderProfile, score])
+  @@index([lastAnalyzedAt])
+  @@map("wallets")
+}
+
+// ============================================================================
+// DormancyMetrics - Track market dormancy for each market
+// ============================================================================
+
+model DormancyMetrics {
+  id                       String   @id @default(cuid())
+  marketId                 String   @unique
+  market                   Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  // Large trade tracking
+  lastLargeTradeAt         DateTime?
+  lastLargeTradeSize       Decimal?  @db.Decimal(20, 2)
+  hoursSinceLastLargeTrade Float?
+
+  // Price movement tracking
+  lastPriceMoveAt          DateTime?
+  lastPriceMovePercentage  Decimal?  @db.Decimal(5, 2)
+  hoursSinceLastPriceMove  Float?
+
+  // Dormancy status
+  isDormant                Boolean   @default(false)
+
+  // Timestamps
+  updatedAt                DateTime  @updatedAt
+
+  @@index([marketId, isDormant])
+  @@map("dormancy_metrics")
+}
+
+// ============================================================================
+// Alerts - Generated insider signals
+// ============================================================================
+
+model Alert {
+  id               String   @id @default(cuid())
+
+  // Relations
+  marketId         String
+  market           Market   @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  walletAddress    String
+  wallet           Wallet   @relation(fields: [walletAddress], references: [address], onDelete: Cascade)
+
+  tradeId          String
+  trade            Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  // Scoring
+  confidenceScore  Int      // 0-100
+
+  // Full alert data (JSON serialized)
+  alertData        Json     // Contains full Alert interface data
+
+  // Notification tracking
+  sentAt           DateTime?
+  sentVia          String[] @default([]) // ['slack', 'telegram']
+
+  // Timestamps
+  createdAt        DateTime @default(now())
+
+  @@index([marketId, confidenceScore])
+  @@index([walletAddress])
+  @@index([createdAt])
+  @@index([sentAt])
+  @@map("alerts")
+}
+
+// ============================================================================
+// CEX Wallets - Known CEX hot wallet addresses for funding detection
+// ============================================================================
+
+model CexWallet {
+  id               String   @id @default(cuid())
+  address          String   @unique
+  exchange         String   // coinbase, binance, kraken, etc.
+  label            String?  // Optional label/description
+  verified         Boolean  @default(true)
+
+  // Metadata
+  addedAt          DateTime @default(now())
+  lastSeenAt       DateTime?
+  notes            String?
+
+  @@index([exchange])
+  @@index([address])
+  @@map("cex_wallets")
+}
+
+// ============================================================================
+// JobQueue - Track background job processing (BullMQ metadata)
+// ============================================================================
+
+model JobQueue {
+  id               String   @id @default(cuid())
+  queueName        String
+  jobId            String   @unique
+  jobType          String
+  status           String   // pending, active, completed, failed
+
+  // Job data
+  data             Json?
+  result           Json?
+  error            String?
+
+  // Timing
+  createdAt        DateTime @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
+
+  // Retry tracking
+  attemptNumber    Int      @default(1)
+  maxAttempts      Int      @default(3)
+
+  @@index([queueName, status])
+  @@index([jobType, status])
+  @@index([createdAt])
+  @@map("job_queue")
+}
+
+// ============================================================================
+// SystemMetrics - Track overall system health and performance
+// ============================================================================
+
+model SystemMetrics {
+  id                   String   @id @default(cuid())
+
+  // Counts
+  activeMarkets        Int      @default(0)
+  totalTrades24h       Int      @default(0)
+  alertsGenerated24h   Int      @default(0)
+  alertsSent24h        Int      @default(0)
+
+  // Performance
+  avgProcessingTimeMs  Int      @default(0)
+  websocketStatus      String   @default("unknown") // connected, disconnected
+
+  // Last activities
+  lastTradeProcessedAt DateTime?
+  lastAlertSentAt      DateTime?
+
+  // Snapshot timestamp
+  timestamp            DateTime @default(now())
+
+  @@index([timestamp])
+  @@map("system_metrics")
+}

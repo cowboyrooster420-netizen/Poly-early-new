@@ -1,0 +1,72 @@
+version: '3.9'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: polymarket-bot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: polymarket
+      POSTGRES_PASSWORD: polymarket_dev_pass
+      POSTGRES_DB: polymarket_bot
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U polymarket']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: polymarket-bot-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Application (optional - can run locally with npm run dev)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: polymarket-bot-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      LOG_LEVEL: debug
+      DATABASE_URL: postgresql://polymarket:polymarket_dev_pass@postgres:5432/polymarket_bot?schema=public
+      REDIS_URL: redis://redis:6379
+      # Add your API keys here or use .env file
+      ALCHEMY_API_KEY: ${ALCHEMY_API_KEY}
+      POLYGONSCAN_API_KEY: ${POLYGONSCAN_API_KEY}
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./src:/app/src:ro
+    env_file:
+      - .env
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
