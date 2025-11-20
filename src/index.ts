@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 
 import { registerHealthRoutes } from './api/health.js';
 import { getEnv } from './config/env.js';
+import { redis } from './services/cache/redis.js';
 import { db } from './services/database/prisma.js';
 import { logger } from './utils/logger.js';
 
@@ -69,7 +70,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // TODO: Initialize Redis connection
+  // Initialize Redis connection
+  try {
+    await redis.connect(env.REDIS_URL);
+  } catch (error) {
+    logger.fatal({ error }, 'Failed to connect to Redis');
+    process.exit(1);
+  }
+
   // TODO: Initialize WebSocket connection to Polymarket
   // TODO: Start background jobs (BullMQ)
 
@@ -104,8 +112,10 @@ async function main(): Promise<void> {
       // Close database connection
       await db.disconnect();
 
+      // Close Redis connection
+      await redis.disconnect();
+
       // TODO: Close WebSocket connections
-      // TODO: Close Redis connections
       // TODO: Drain job queues
 
       logger.info('Graceful shutdown completed');

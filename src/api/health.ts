@@ -117,18 +117,24 @@ async function checkDatabaseHealth(): Promise<ServiceStatus> {
  * Check Redis connectivity
  */
 async function checkRedisHealth(): Promise<ServiceStatus> {
-  const startTime = Date.now();
   try {
-    // This will be implemented once Redis is set up
-    // For now, return unknown status
-    return {
-      status: 'unknown',
-      latency: Date.now() - startTime,
+    const { redis } = await import('../services/cache/redis.js');
+    const health = await redis.healthCheck();
+
+    const result: ServiceStatus = {
+      status: health.isHealthy ? 'up' : 'down',
+      latency: health.latency,
     };
+
+    if (health.error !== undefined) {
+      result.error = health.error;
+    }
+
+    return result;
   } catch (error) {
     return {
       status: 'down',
-      latency: Date.now() - startTime,
+      latency: 0,
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
