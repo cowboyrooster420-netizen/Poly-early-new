@@ -6,6 +6,8 @@ import { registerHealthRoutes } from './api/health.js';
 import { getEnv } from './config/env.js';
 import { redis } from './services/cache/redis.js';
 import { db } from './services/database/prisma.js';
+import { marketService } from './services/polymarket/market-service.js';
+import { tradeService } from './services/polymarket/trade-service.js';
 import { polymarketWs } from './services/polymarket/websocket.js';
 import { logger } from './utils/logger.js';
 
@@ -87,8 +89,20 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Register trade handler
+  polymarketWs.onTrade((trade) => {
+    void tradeService.processTrade(trade);
+  });
+
+  // Initialize market service and subscribe to markets
+  try {
+    await marketService.initialize();
+  } catch (error) {
+    logger.fatal({ error }, 'Failed to initialize market service');
+    process.exit(1);
+  }
+
   // TODO: Start background jobs (BullMQ)
-  // TODO: Load and subscribe to monitored markets
 
   // Start HTTP server
   try {
