@@ -2,6 +2,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 
 import { db } from '../database/prisma.js';
 import { signalDetector } from '../signals/signal-detector.js';
+import { walletForensicsService } from '../blockchain/wallet-forensics.js';
 import { marketService } from './market-service.js';
 import { logger } from '../../utils/logger.js';
 import type { PolymarketTrade } from '../../types/index.js';
@@ -146,7 +147,24 @@ class TradeService {
         '🎯 Potential insider signal detected!'
       );
 
-      // TODO: Step 3: Analyze wallet fingerprint
+      // Step 3: Analyze wallet fingerprint
+      const walletFingerprint = await walletForensicsService.analyzeWallet(
+        trade.taker
+      );
+
+      logger.info(
+        {
+          wallet: trade.taker.substring(0, 10) + '...',
+          isSuspicious: walletFingerprint.isSuspicious,
+          cexFunded: walletFingerprint.flags.cexFunded,
+          lowTxCount: walletFingerprint.flags.lowTxCount,
+          youngWallet: walletFingerprint.flags.youngWallet,
+          highPolymarketNetflow: walletFingerprint.flags.highPolymarketNetflow,
+          singlePurpose: walletFingerprint.flags.singlePurpose,
+        },
+        '🔍 Wallet fingerprint analyzed'
+      );
+
       // TODO: Step 4: Calculate confidence score
       // TODO: Step 5: Generate alert if score >= threshold
     } catch (error) {

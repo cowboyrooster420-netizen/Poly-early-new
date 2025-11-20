@@ -1,6 +1,8 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
-import { env } from '../../config/env.js';
+import axios, { type AxiosInstance, AxiosError } from 'axios';
+import { getEnv } from '../../config/env.js';
 import { logger } from '../../utils/logger.js';
+
+const env = getEnv();
 
 /**
  * Alchemy API response types
