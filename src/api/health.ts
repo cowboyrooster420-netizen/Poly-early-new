@@ -146,12 +146,21 @@ async function checkRedisHealth(): Promise<ServiceStatus> {
 async function checkWebSocketHealth(): Promise<ServiceStatus> {
   const startTime = Date.now();
   try {
-    // This will be implemented once WebSocket is set up
-    // For now, return unknown status
-    return {
-      status: 'unknown',
+    const { polymarketWs } = await import(
+      '../services/polymarket/websocket.js'
+    );
+    const health = await polymarketWs.healthCheck();
+
+    const result: ServiceStatus = {
+      status: health.isHealthy ? 'up' : 'down',
       latency: Date.now() - startTime,
     };
+
+    if (health.error !== undefined) {
+      result.error = health.error;
+    }
+
+    return result;
   } catch (error) {
     return {
       status: 'down',

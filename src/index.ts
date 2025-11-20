@@ -6,6 +6,7 @@ import { registerHealthRoutes } from './api/health.js';
 import { getEnv } from './config/env.js';
 import { redis } from './services/cache/redis.js';
 import { db } from './services/database/prisma.js';
+import { polymarketWs } from './services/polymarket/websocket.js';
 import { logger } from './utils/logger.js';
 
 /**
@@ -78,8 +79,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // TODO: Initialize WebSocket connection to Polymarket
+  // Initialize WebSocket connection to Polymarket
+  try {
+    await polymarketWs.connect();
+  } catch (error) {
+    logger.fatal({ error }, 'Failed to connect to Polymarket WebSocket');
+    process.exit(1);
+  }
+
   // TODO: Start background jobs (BullMQ)
+  // TODO: Load and subscribe to monitored markets
 
   // Start HTTP server
   try {
@@ -109,13 +118,15 @@ async function main(): Promise<void> {
       await app.close();
       logger.info('HTTP server closed');
 
+      // Close WebSocket connection
+      await polymarketWs.disconnect();
+
       // Close database connection
       await db.disconnect();
 
       // Close Redis connection
       await redis.disconnect();
 
-      // TODO: Close WebSocket connections
       // TODO: Drain job queues
 
       logger.info('Graceful shutdown completed');
