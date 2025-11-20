@@ -1,6 +1,7 @@
 import { Decimal } from '@prisma/client/runtime/library';
 
 import { db } from '../database/prisma.js';
+import { signalDetector } from '../signals/signal-detector.js';
 import { marketService } from './market-service.js';
 import { logger } from '../../utils/logger.js';
 import type { PolymarketTrade } from '../../types/index.js';
@@ -62,13 +63,8 @@ class TradeService {
       // Increment counter
       this.tradeCount++;
 
-      // TODO: Trigger signal detection pipeline
-      // - Check OI percentage
-      // - Check price impact
-      // - Check dormancy conditions
-      // - Check wallet fingerprint
-      // - Calculate confidence score
-      // - Generate alert if conditions met
+      // Trigger signal detection pipeline
+      await this.detectSignals(trade);
     } catch (error) {
       logger.error({ error, tradeId: trade.id }, 'Failed to process trade');
       // Don't throw - we don't want one bad trade to kill the stream
@@ -108,6 +104,54 @@ class TradeService {
       }
 
       throw error;
+    }
+  }
+
+  /**
+   * Detect insider signals from trade
+   */
+  private async detectSignals(trade: PolymarketTrade): Promise<void> {
+    try {
+      // Step 1: Analyze trade for size/impact
+      const signal = await signalDetector.analyzeTrade(trade);
+
+      if (signal === null) {
+        // Trade doesn't meet size/impact thresholds
+        return;
+      }
+
+      // Step 2: Check market dormancy
+      const dormancy = await signalDetector.checkDormancy(
+        trade.marketId,
+        trade.timestamp
+      );
+
+      if (!dormancy.isDormant) {
+        logger.debug(
+          { tradeId: trade.id },
+          'Market not dormant, skipping signal'
+        );
+        return;
+      }
+
+      logger.info(
+        {
+          tradeId: trade.id,
+          marketId: trade.marketId,
+          wallet: trade.taker.substring(0, 10) + '...',
+          oiPercentage: signal.oiPercentage.toFixed(2),
+          priceImpact: signal.priceImpact.toFixed(2),
+          dormantHours: dormancy.hoursSinceLastLargeTrade.toFixed(1),
+        },
+        '🎯 Potential insider signal detected!'
+      );
+
+      // TODO: Step 3: Analyze wallet fingerprint
+      // TODO: Step 4: Calculate confidence score
+      // TODO: Step 5: Generate alert if score >= threshold
+    } catch (error) {
+      logger.error({ error, tradeId: trade.id }, 'Failed to detect signals');
+      // Don't throw - signal detection failure shouldn't break trade processing
     }
   }
 
