@@ -1,8 +1,5 @@
 import { logger } from '../../utils/logger.js';
-import type {
-  TradeSignal,
-  DormancyMetrics,
-} from '../signals/signal-detector.js';
+import type { TradeSignal, DormancyMetrics } from '../../types/index.js';
 import type { WalletFingerprint } from '../blockchain/wallet-forensics.js';
 
 /**

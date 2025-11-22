@@ -3,6 +3,8 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { db } from '../database/prisma.js';
 import { signalDetector } from '../signals/signal-detector.js';
 import { walletForensicsService } from '../blockchain/wallet-forensics.js';
+import { alertScorer } from '../alerts/alert-scorer.js';
+import { alertPersistence } from '../alerts/alert-persistence.js';
 import { marketService } from './market-service.js';
 import { logger } from '../../utils/logger.js';
 import type { PolymarketTrade } from '../../types/index.js';
@@ -165,8 +167,61 @@ class TradeService {
         '🔍 Wallet fingerprint analyzed'
       );
 
-      // TODO: Step 4: Calculate confidence score
-      // TODO: Step 5: Generate alert if score >= threshold
+      // Step 4: Calculate confidence score
+      const alertScore = alertScorer.calculateScore({
+        tradeSignal: signal,
+        dormancy,
+        walletFingerprint,
+      });
+
+      logger.info(
+        {
+          tradeId: trade.id,
+          totalScore: alertScore.totalScore,
+          classification: alertScore.classification,
+          recommendation: alertScore.recommendation,
+          breakdown: alertScore.breakdown,
+        },
+        '📊 Alert score calculated'
+      );
+
+      // Step 5: Generate alert if score >= threshold
+      if (alertScorer.shouldAlert(alertScore)) {
+        await alertPersistence.createAlert({
+          tradeId: trade.id,
+          marketId: trade.marketId,
+          walletAddress: trade.taker,
+          tradeSize: trade.size,
+          tradePrice: trade.price,
+          tradeSide: trade.side.toUpperCase() as 'BUY' | 'SELL',
+          timestamp: new Date(trade.timestamp),
+          confidenceScore: alertScore.totalScore,
+          classification: alertScore.classification,
+          tradeSignal: signal,
+          dormancyMetrics: dormancy,
+          walletFingerprint,
+          scoreBreakdown: alertScore.breakdown,
+        });
+
+        logger.warn(
+          {
+            tradeId: trade.id,
+            marketId: trade.marketId,
+            wallet: trade.taker.substring(0, 10) + '...',
+            score: alertScore.totalScore,
+            classification: alertScore.classification,
+          },
+          '🚨 HIGH CONFIDENCE INSIDER SIGNAL - ALERT CREATED'
+        );
+      } else {
+        logger.info(
+          {
+            score: alertScore.totalScore,
+            classification: alertScore.classification,
+          },
+          'Signal detected but below alert threshold - monitoring only'
+        );
+      }
     } catch (error) {
       logger.error({ error, tradeId: trade.id }, 'Failed to detect signals');
       // Don't throw - signal detection failure shouldn't break trade processing

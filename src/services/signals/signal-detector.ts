@@ -77,6 +77,9 @@ class SignalDetector {
         return null;
       }
 
+      // Calculate USD value (size * price for binary prediction markets)
+      const tradeUsdValue = parseFloat(trade.size) * parseFloat(trade.price);
+
       // Build trade signal
       const signal: TradeSignal = {
         tradeId: trade.id,
@@ -88,6 +91,7 @@ class SignalDetector {
         priceImpact,
         priceBeforeTrade: '0', // TODO: implement orderbook tracking
         priceAfterTrade: trade.price,
+        tradeUsdValue,
         timestamp: trade.timestamp,
         outcome: trade.outcome,
       };

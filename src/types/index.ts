@@ -58,6 +58,7 @@ export interface TradeSignal {
   priceImpact: number;
   priceBeforeTrade: string;
   priceAfterTrade: string;
+  tradeUsdValue: number;
   timestamp: number;
   outcome: 'yes' | 'no';
 }
