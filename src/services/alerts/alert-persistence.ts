@@ -1,4 +1,5 @@
 import { db, type PrismaClient } from '../database/prisma.js';
+import { notificationCoordinator } from '../notifications/notification-coordinator.js';
 import { logger } from '../../utils/logger.js';
 import type { AlertScore } from './alert-scorer.js';
 import type { TradeSignal, DormancyMetrics } from '../../types/index.js';
@@ -122,6 +123,9 @@ class AlertPersistenceService {
         },
         '🚨 Alert created and persisted'
       );
+
+      // Send notifications to all configured channels
+      await notificationCoordinator.sendAlert(data);
     } catch (error) {
       logger.error(
         {
