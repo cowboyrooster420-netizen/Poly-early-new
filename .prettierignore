@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+*.md
+.env*
+.git
+.husky
+prisma/migrations
