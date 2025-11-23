@@ -1,206 +1,552 @@
 # Polymarket Insider Signal Bot
 
-A production-grade bot that detects potentially informed trades on Polymarket by combining on-chain wallet forensics, market microstructure monitoring, timing filters, and relative liquidity/price impact metrics.
+Production-grade automated detection system for identifying potentially informed trading activity on Polymarket prediction markets. Combines on-chain wallet forensics, market microstructure analysis, and behavioral heuristics to generate high-confidence insider trading signals.
 
-## Project Status
+**Target Output:** 2-6 high-quality alerts per month with minimal false positives.
 
-**Phase 1 Complete** - Production-grade TypeScript foundation with:
-- ✅ TypeScript with strict mode enabled
-- ✅ Pino structured logging
-- ✅ Zod environment validation
-- ✅ PostgreSQL + Prisma ORM
-- ✅ Docker multi-stage build
-- ✅ Health check endpoints
-- ✅ ESLint + Prettier + Husky
-- ✅ Comprehensive type definitions
+## Features
+
+### 🎯 Signal Detection
+- **OI-Relative Analysis**: Detects trades ≥20% of open interest or ≥20% price impact
+- **Dormancy Detection**: Identifies activity in dormant markets (4hr no large trades, 3hr no price moves)
+- **Real-time WebSocket**: Sub-second trade detection with automatic reconnection
+
+### 🔍 Wallet Forensics
+- **CEX Funding Detection**: Tracks wallets funded from 20+ known exchange addresses (14-day window)
+- **Wallet Age Analysis**: Flags wallets < 90 days old
+- **Transaction Heuristics**: Analyzes tx count (< 40 = suspicious), Polymarket netflow (≥ 85% = single-purpose)
+- **Protocol Diversity**: Checks interactions with other DeFi/gaming protocols
+- **Blockchain APIs**: Alchemy (25 req/sec) + Polygonscan (5 req/sec) with rate limiting
+
+### 📊 Alert Scoring
+- **0-100 Confidence Score** combining:
+  - Trade Size (0-25pts): OI% + price impact
+  - Dormancy (0-25pts): Hours since last activity
+  - Wallet Suspicion (0-35pts): CEX funded, low tx, young wallet, high netflow, single-purpose
+  - Timing (0-15pts): Reserved for future leak-window detection
+- **Classification**: Low/Medium/High/Critical
+- **Alert Threshold**: Score ≥ 70 triggers notifications
+
+### 📨 Notifications
+- **Slack**: Rich formatted messages with market links, wallet analysis, signal breakdown
+- **Telegram**: Markdown formatting with inline links
+- **Auto-delivery**: Notifications sent immediately when high-confidence alerts are created
+
+### 🏗️ Production Infrastructure
+- **TypeScript**: Strict mode with comprehensive type safety
+- **Database**: PostgreSQL + Prisma ORM with transaction retry logic
+- **Caching**: Redis (5min market data, 24hr wallet fingerprints)
+- **Logging**: Pino structured logging (JSON in prod, pretty-print in dev)
+- **Error Handling**: Comprehensive error isolation (failures don't break pipeline)
+- **Health Checks**: Liveness and readiness probes for Kubernetes/Docker
+- **Docker**: Multi-stage build with non-root user
 
 ## Architecture
 
-Built on a lightweight, high-precision signal detection system focused on:
-- Large relative trades (≥20% OI or ≥20% price impact)
-- Dormant market conditions
-- Insider wallet fingerprinting (CEX funding, low tx count, high netflow)
-- Timing leak windows (political staffers, pre-announcements, etc.)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Polymarket WebSocket                         │
+│           (wss://ws-subscriptions-clob.polymarket.com)          │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+                   ┌─────────────────┐
+                   │  Trade Service  │
+                   └────────┬────────┘
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │Signal Detector  │
+                   │ - OI Analysis   │
+                   │ - Dormancy      │
+                   └────────┬────────┘
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │Wallet Forensics │
+                   │ - Alchemy API   │
+                   │ - Polygonscan   │
+                   └────────┬────────┘
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │  Alert Scorer   │
+                   │  (0-100 score)  │
+                   └────────┬────────┘
+                            │
+                     [Score >= 70?]
+                            │
+                            ▼
+         ┌──────────────────┼──────────────────┐
+         ▼                  ▼                  ▼
+    ┌─────────┐      ┌──────────┐      ┌──────────┐
+    │Database │      │  Slack   │      │ Telegram │
+    └─────────┘      └──────────┘      └──────────┘
+```
 
-Target: 2-6 high-quality alerts per month with minimal noise.
-
-## Tech Stack
-
-- **Runtime:** Node.js 20+
-- **Language:** TypeScript (strict mode)
-- **Database:** PostgreSQL 16 + Prisma ORM
-- **Cache:** Redis 7
-- **HTTP Server:** Fastify
-- **Logging:** Pino
-- **Validation:** Zod
-- **Job Queue:** BullMQ
-- **Deployment:** Docker (Fly.io/Render ready)
-
-## Getting Started
+## Quick Start
 
 ### Prerequisites
 
-- Node.js 20+
-- Docker & Docker Compose
-- PostgreSQL 16
-- Redis 7
+- Node.js 20+ LTS
+- PostgreSQL 14+
+- Redis 7+
+- Docker & Docker Compose (for deployment)
+- Alchemy API key (Polygon mainnet)
+- Polygonscan API key
+- (Optional) Slack webhook URL
+- (Optional) Telegram bot token + chat ID
 
-### Installation
+### 1. Clone and Install
 
-1. **Clone the repository**
 ```bash
-git clone <repo-url>
+git clone <your-repo-url>
 cd Poly-early-new
-```
-
-2. **Install dependencies**
-```bash
 npm install
 ```
 
-3. **Set up environment variables**
+### 2. Environment Configuration
+
+Create a `.env` file:
+
 ```bash
-cp .env.example .env
-# Edit .env with your configuration
+# Application
+NODE_ENV=production
+PORT=3000
+LOG_LEVEL=info
+
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/polymarket_bot
+
+# Redis
+REDIS_URL=redis://localhost:6379
+
+# Blockchain APIs
+ALCHEMY_API_KEY=your_alchemy_api_key_here
+POLYGONSCAN_API_KEY=your_polygonscan_api_key_here
+
+# Polymarket (defaults provided)
+POLYMARKET_WS_URL=wss://ws-subscriptions-clob.polymarket.com/ws/market
+POLYMARKET_API_URL=https://clob.polymarket.com
+
+# Notifications (at least one required in production)
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=your_chat_id_here
+
+# Optional: Observability
+SENTRY_DSN=https://your-sentry-dsn
+
+# Detection Thresholds (optional - defaults provided)
+MIN_OI_PERCENTAGE=20
+MIN_PRICE_IMPACT=20
+DORMANT_HOURS_NO_LARGE_TRADES=4
+DORMANT_HOURS_NO_PRICE_MOVES=3
+DORMANT_LARGE_TRADE_THRESHOLD=2000
+DORMANT_PRICE_MOVE_THRESHOLD=8
+MAX_WALLET_TRANSACTIONS=40
+MIN_NETFLOW_PERCENTAGE=85
+CEX_FUNDING_WINDOW_DAYS=14
 ```
 
-4. **Start local services (PostgreSQL + Redis)**
+### 3. Database Setup
+
 ```bash
-docker-compose up -d postgres redis
+# Generate Prisma client
+npx prisma generate
+
+# Run migrations
+npx prisma migrate deploy
+
+# (Optional) Seed with curated markets
+npm run seed
 ```
 
-5. **Run database migrations**
+### 4. Build
+
 ```bash
-npm run db:migrate
+npm run build
 ```
 
-6. **Generate Prisma client**
-```bash
-npm run db:generate
-```
+### 5. Run
 
-7. **Start development server**
 ```bash
+# Development
 npm run dev
+
+# Production
+npm start
 ```
 
-The server will start on `http://localhost:3000`
+## Docker Deployment
+
+### Using Docker Compose (Recommended)
+
+Create `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: polymarket_bot
+      POSTGRES_USER: polymarket
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polymarket"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  bot:
+    build: .
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://polymarket:${DB_PASSWORD}@postgres:5432/polymarket_bot
+      REDIS_URL: redis://redis:6379
+      ALCHEMY_API_KEY: ${ALCHEMY_API_KEY}
+      POLYGONSCAN_API_KEY: ${POLYGONSCAN_API_KEY}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+### Deploy
+
+```bash
+# Create .env file with your secrets
+cp .env.example .env
+
+# Start services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f bot
+
+# Stop services
+docker-compose down
+```
+
+## Configuration
+
+### Detection Thresholds
+
+Customize via environment variables or `src/config/thresholds.ts`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MIN_OI_PERCENTAGE` | 20 | Minimum % of open interest for signal |
+| `MIN_PRICE_IMPACT` | 20 | Minimum % price impact for signal |
+| `DORMANT_HOURS_NO_LARGE_TRADES` | 4 | Hours without $2k+ trades |
+| `DORMANT_HOURS_NO_PRICE_MOVES` | 3 | Hours without ≥8% price moves |
+| `MAX_WALLET_TRANSACTIONS` | 40 | Max txs for "low activity" flag |
+| `MIN_NETFLOW_PERCENTAGE` | 85 | Min % netflow to Polymarket |
+| `CEX_FUNDING_WINDOW_DAYS` | 14 | Days to check for CEX funding |
+
+### Market Selection
+
+Add markets to monitor in `prisma/seed.ts` or via the database:
+
+```sql
+INSERT INTO "Market" (id, question, slug, tier, category, enabled)
+VALUES (
+  'market-id-here',
+  'Will Trump win 2024?',
+  'trump-2024',
+  1,  -- Tier 1 = highest priority
+  'politics',
+  true
+);
+```
+
+**Tiers:**
+- **Tier 1**: Major markets (elections, corporate events) - highest priority
+- **Tier 2**: Medium markets (sports, crypto)
+- **Tier 3**: Smaller markets
+
+### CEX Wallet Addresses
+
+Update `src/config/cex-wallets.ts` to add/remove exchange addresses:
+
+```typescript
+export const CEX_HOT_WALLETS = new Map([
+  ['0x...', 'coinbase'],
+  ['0x...', 'binance'],
+  // Add more...
+]);
+```
+
+## API Endpoints
 
 ### Health Checks
 
-- **Liveness:** `GET /health/live` - Simple ping check
-- **Readiness:** `GET /health/ready` - Full health check (DB, Redis, WebSocket)
+```bash
+# Liveness probe (is server running?)
+GET /health/live
 
-## Project Structure
-
-```
-├── src/
-│   ├── api/              # HTTP API routes
-│   │   └── health.ts     # Health check endpoints
-│   ├── config/           # Configuration
-│   │   └── env.ts        # Environment validation
-│   ├── services/         # Core services
-│   │   ├── database/     # Database layer
-│   │   ├── polymarket/   # Polymarket API & WebSocket
-│   │   └── wallet/       # On-chain wallet analysis
-│   ├── types/            # TypeScript type definitions
-│   ├── utils/            # Utilities
-│   │   └── logger.ts     # Structured logging
-│   └── index.ts          # Application entry point
-├── prisma/
-│   └── schema.prisma     # Database schema
-├── docker-compose.yml    # Local development services
-├── Dockerfile            # Production container
-└── package.json
+# Readiness probe (is server ready to accept traffic?)
+GET /health/ready
 ```
 
-## Database Schema
+### Metrics (Coming Soon)
 
-### Core Models
-- **Markets** - Polymarket markets being monitored
-- **Trades** - All trades on monitored markets
-- **Wallets** - On-chain wallet analysis and fingerprinting
-- **DormancyMetrics** - Market dormancy tracking
-- **Alerts** - Generated insider signals
-- **CexWallets** - Known CEX hot wallet addresses
-- **JobQueue** - Background job tracking
-- **SystemMetrics** - System health metrics
+```bash
+# Alert statistics
+GET /api/alerts/stats
+
+# Recent alerts
+GET /api/alerts/recent?limit=10
+
+# Alerts by classification
+GET /api/alerts?classification=critical
+```
+
+## Monitoring
+
+### Logs
+
+Structured JSON logs in production:
+
+```bash
+# View logs
+docker-compose logs -f bot
+
+# Filter by level
+docker-compose logs bot | grep '"level":"error"'
+
+# Filter by component
+docker-compose logs bot | grep 'walletForensics'
+```
+
+### Key Log Events
+
+- `🎯 Potential insider signal detected` - Initial signal (OI + dormancy)
+- `🔍 Wallet fingerprint analyzed` - Wallet forensics complete
+- `📊 Alert score calculated` - Scoring complete
+- `🚨 HIGH CONFIDENCE INSIDER SIGNAL` - Alert created (score ≥ 70)
+- `📨 Slack alert sent successfully` - Notification delivered
+
+### Alert Statistics
+
+```typescript
+// Get alert stats
+const stats = await alertPersistence.getAlertStats();
+// Returns: { total, critical, high, medium, low, last24h }
+```
+
+## Troubleshooting
+
+### WebSocket Connection Issues
+
+**Symptoms:** `WebSocket connection failed`, `Disconnected from Polymarket`
+
+**Solutions:**
+1. Check internet connectivity
+2. Verify Polymarket API is operational: https://status.polymarket.com
+3. Check firewall rules (allow outbound WSS on port 443)
+4. Review logs for reconnection attempts
+
+### API Rate Limiting
+
+**Symptoms:** `Failed to get wallet age`, `Alchemy request failed with 429`
+
+**Solutions:**
+1. Upgrade Alchemy plan (free tier = 25 req/sec)
+2. Increase `CACHE_TTL_SECONDS` in wallet forensics
+3. Add more API keys and implement round-robin
+
+### Database Connection Issues
+
+**Symptoms:** `Failed to connect to database`, `Prisma Client initialization error`
+
+**Solutions:**
+1. Verify PostgreSQL is running: `docker-compose ps postgres`
+2. Check DATABASE_URL format: `postgresql://user:pass@host:5432/db`
+3. Ensure migrations are applied: `npx prisma migrate deploy`
+4. Check connection pool settings in `prisma/schema.prisma`
+
+### No Alerts Generated
+
+**Possible Causes:**
+1. **Markets too active:** No markets meeting dormancy thresholds (4hr/3hr)
+2. **No large trades:** No trades meeting OI/impact thresholds (20%/20%)
+3. **Thresholds too strict:** Consider lowering detection thresholds
+4. **Market selection:** Not monitoring high-liquidity markets
+
+**Diagnostics:**
+```bash
+# Check if trades are being processed
+docker-compose logs bot | grep "Trade processed"
+
+# Check signal detection
+docker-compose logs bot | grep "Large trade detected"
+
+# Check wallet analysis
+docker-compose logs bot | grep "Wallet fingerprint analyzed"
+```
+
+### Notification Failures
+
+**Symptoms:** `Failed to send Slack notification`, `Telegram not configured`
+
+**Solutions:**
+1. Verify webhook URLs are correct
+2. Test connectivity: `curl -X POST $SLACK_WEBHOOK_URL -d '{"text":"test"}'`
+3. Check Telegram bot token: `curl https://api.telegram.org/bot$TOKEN/getMe`
+4. Ensure at least one notification channel is configured (required in production)
 
 ## Development
 
-### Available Scripts
+### Project Structure
 
-- `npm run dev` - Start development server with hot reload
-- `npm run build` - Build for production
-- `npm start` - Start production server
-- `npm run lint` - Run ESLint
-- `npm run lint:fix` - Fix ESLint errors
-- `npm run format` - Format code with Prettier
-- `npm run type-check` - Run TypeScript type checking
-- `npm test` - Run tests
-- `npm run db:generate` - Generate Prisma client
-- `npm run db:migrate` - Run database migrations
-- `npm run db:studio` - Open Prisma Studio
+```
+src/
+├── config/          # Configuration (env, thresholds, CEX wallets)
+├── services/
+│   ├── alerts/      # Scoring, persistence
+│   ├── blockchain/  # Alchemy, Polygonscan, wallet forensics
+│   ├── cache/       # Redis service
+│   ├── database/    # Prisma service
+│   ├── notifications/ # Slack, Telegram
+│   ├── polymarket/  # WebSocket, markets, trades
+│   └── signals/     # Signal detection (OI, dormancy)
+├── types/           # TypeScript type definitions
+├── utils/           # Logger, helpers
+└── index.ts         # Application entry point
+```
+
+### Running Tests
+
+```bash
+# Unit tests
+npm test
+
+# Integration tests
+npm run test:integration
+
+# E2E tests
+npm run test:e2e
+
+# Coverage
+npm run test:coverage
+```
 
 ### Code Quality
 
-This project enforces strict TypeScript and code quality standards:
-- Strict mode enabled for all TS checks
-- ESLint with TypeScript plugin
-- Prettier for consistent formatting
-- Husky + lint-staged for pre-commit checks
-- No `any` types allowed
-- Explicit return types required
-
-## Deployment
-
-### Docker Build
-
 ```bash
-docker build -t polymarket-bot .
-docker run -p 3000:3000 --env-file .env polymarket-bot
+# Linting
+npm run lint
+
+# Type checking
+npm run type-check
+
+# Format code
+npm run format
 ```
 
-### Environment Variables
+### Database Migrations
 
-See `.env.example` for all required environment variables.
+```bash
+# Create migration
+npx prisma migrate dev --name add_new_field
 
-**Required:**
-- `DATABASE_URL` - PostgreSQL connection string
-- `REDIS_URL` - Redis connection string
-- `ALCHEMY_API_KEY` - Alchemy API key for Polygon
-- `POLYGONSCAN_API_KEY` - Polygonscan API key
+# Apply migration (production)
+npx prisma migrate deploy
 
-**Optional:**
-- `SLACK_WEBHOOK_URL` - For Slack notifications
-- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` - For Telegram notifications
-- `SENTRY_DSN` - For error tracking
+# Reset database (development only!)
+npx prisma migrate reset
+```
 
-## Roadmap
+## Performance
 
-### ✅ Phase 1 - Skeleton (Complete)
-- TypeScript project setup
-- Database schema
-- Health check API
+### Optimization Tips
 
-### 🔄 Phase 2 - Core Signal Detection (In Progress)
-- OI-relative trade detection
-- Price-move logic
-- Dormant window tracking
+1. **Redis Caching:**
+   - Market data: 5min TTL (balance freshness vs API usage)
+   - Wallet fingerprints: 24hr TTL (wallets don't change quickly)
 
-### 📋 Phase 3 - Wallet Forensics (Planned)
-- On-chain wallet fetch
-- CEX funding detection
-- Tx-count & netflow analysis
+2. **Database Indexes:**
+   - Already optimized for timestamp, marketId, wallet queries
+   - Add custom indexes if querying by other fields
 
-### 📋 Phase 4 - Alert Engine (Planned)
-- JSON alerts + scoring
-- Push to Slack/Telegram
+3. **API Rate Limits:**
+   - Alchemy: 25 req/sec (Growth plan) - monitor usage
+   - Polygonscan: 5 req/sec (Free tier) - upgrade if needed
 
-### 📋 Phase 5 - Optimization (Planned)
-- Backtest major trades
-- Adjust thresholds per market type
+4. **Parallelization:**
+   - Wallet forensics runs 5 analyses in parallel
+   - Notifications sent to all channels in parallel
+
+## Security
+
+### Best Practices
+
+1. **Environment Variables:** Never commit `.env` to git
+2. **API Keys:** Rotate regularly, use separate keys for dev/prod
+3. **Database:** Use strong passwords, restrict network access
+4. **Docker:** Runs as non-root user (`botuser:nodejs`)
+5. **Secrets Management:** Use Docker secrets or Kubernetes secrets in production
+
+### Sensitive Data
+
+The bot stores:
+- Trade data (public blockchain data)
+- Wallet addresses (public)
+- Market IDs (public)
+- No PII or private keys
 
 ## License
 
 MIT
+
+## Support
+
+- **Issues:** https://github.com/your-org/polymarket-insider-bot/issues
+- **Docs:** https://docs.your-domain.com
+- **Discord:** https://discord.gg/your-server
+
+## Acknowledgments
+
+- Polymarket for providing public market data APIs
+- Alchemy for blockchain infrastructure
+- The prediction markets community
+
+---
+
+**Disclaimer:** This bot is for educational and research purposes. Trading based on insider information may be illegal in certain jurisdictions. Use responsibly and ensure compliance with local regulations.
