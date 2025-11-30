@@ -8,7 +8,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install dependencies
+# Install dependencies (skip husky in production)
+ENV HUSKY=0
 RUN npm ci --only=production && \
     npm cache clean --force
 
@@ -22,7 +23,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install all dependencies (including dev)
+# Install all dependencies (including dev, skip husky)
+ENV HUSKY=0
 RUN npm ci
 
 # Copy source code
