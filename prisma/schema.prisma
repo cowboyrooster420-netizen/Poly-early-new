@@ -96,34 +96,29 @@ model Trade {
 model Wallet {
   address      String   @id
 
-  // Funding analysis
-  fundingSource String? // coinbase, binance, kraken, gemini, okx, kucoin, unknown
-
   // Transaction metrics
-  transactionCount     Int      @default(0)
-  firstTransactionAt   DateTime?
-  lastTransactionAt    DateTime?
-  walletAgeInDays      Int?
+  totalTransactions    Int      @default(0)
+  walletAgeDays        Int?
+  firstSeenTimestamp   DateTime?
+
+  // CEX funding analysis
+  cexFundingSource     String?  // coinbase, binance, kraken, gemini, okx, kucoin, unknown
+  cexFundingTimestamp  DateTime?
 
   // Flow analysis
-  netflowToPolymarket  Decimal  @db.Decimal(20, 2) @default(0)
-  netflowPercentage    Decimal  @db.Decimal(5, 2)  @default(0)
+  polymarketNetflowPercentage Float @default(0)
+  uniqueProtocolsInteracted   Int   @default(0)
 
-  // Activity flags
-  hasDefiActivity      Boolean  @default(false)
-  hasGamingActivity    Boolean  @default(false)
-  tokenDiversity       Int      @default(0)
-
-  // Insider scoring
-  matchesInsiderProfile Boolean @default(false)
-  score                 Int      @default(0) // 0-100
+  // Suspicion flags
+  isSuspicious              Boolean @default(false)
+  flagCexFunded             Boolean @default(false)
+  flagLowTxCount            Boolean @default(false)
+  flagYoungWallet           Boolean @default(false)
+  flagHighPolymarketNetflow Boolean @default(false)
+  flagSinglePurpose         Boolean @default(false)
 
   // Analysis metadata
-  lastAnalyzedAt       DateTime @default(now())
-  analysisVersion      String   @default("1.0")
-
-  // Raw data cache (for debugging)
-  rawData              Json?
+  analyzedAt           DateTime @default(now())
 
   // Timestamps
   createdAt            DateTime @default(now())
@@ -132,9 +127,9 @@ model Wallet {
   // Relations
   alerts               Alert[]
 
-  @@index([fundingSource])
-  @@index([matchesInsiderProfile, score])
-  @@index([lastAnalyzedAt])
+  @@index([cexFundingSource])
+  @@index([isSuspicious])
+  @@index([analyzedAt])
   @@map("wallets")
 }
 
@@ -184,15 +179,54 @@ model Alert {
   tradeId          String
   trade            Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
 
+  // Trade details
+  tradeSize        String
+  tradePrice       String
+  tradeSide        String   // BUY, SELL
+  timestamp        DateTime
+
   // Scoring
   confidenceScore  Int      // 0-100
+  classification   String   // low, medium, high, critical
 
-  // Full alert data (JSON serialized)
-  alertData        Json     // Contains full Alert interface data
+  // Trade signal metrics
+  oiPercentage     Float?
+  priceImpact      Float?
+  tradeUsdValue    Float?
+
+  // Dormancy metrics
+  isDormant                  Boolean  @default(false)
+  hoursSinceLastLargeTrade   Float?
+  hoursSinceLastPriceMove    Float?
+  lastLargeTradeTimestamp    DateTime?
+  lastPriceMoveTimestamp     DateTime?
+
+  // Wallet flags
+  walletIsSuspicious         Boolean  @default(false)
+  walletCexFunded            Boolean  @default(false)
+  walletLowTxCount           Boolean  @default(false)
+  walletYoung                Boolean  @default(false)
+  walletHighPolymarketNetflow Boolean @default(false)
+  walletSinglePurpose        Boolean  @default(false)
+
+  // Wallet metadata
+  walletTotalTransactions           Int?
+  walletAgeDays                     Int?
+  walletCexFundingSource            String?
+  walletPolymarketNetflowPercentage Float?
+
+  // Score breakdown
+  scoreTradeSize       Int?
+  scoreDormancy        Int?
+  scoreWalletSuspicion Int?
+  scoreTiming          Int?
 
   // Notification tracking
-  sentAt           DateTime?
-  sentVia          String[] @default([]) // ['slack', 'telegram']
+  notified         Boolean   @default(false)
+  notifiedAt       DateTime?
+  dismissed        Boolean   @default(false)
+  dismissedAt      DateTime?
+  notes            String?
 
   // Timestamps
   createdAt        DateTime @default(now())
@@ -200,7 +234,9 @@ model Alert {
   @@index([marketId, confidenceScore])
   @@index([walletAddress])
   @@index([createdAt])
-  @@index([sentAt])
+  @@index([timestamp])
+  @@index([classification])
+  @@index([dismissed])
   @@map("alerts")
 }
 
