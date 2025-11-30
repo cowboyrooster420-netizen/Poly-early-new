@@ -76,8 +76,13 @@ class AlertPersistenceService {
             hoursSinceLastPriceMove:
               data.dormancyMetrics.hoursSinceLastPriceMove,
             lastLargeTradeTimestamp:
-              data.dormancyMetrics.lastLargeTradeTimestamp,
-            lastPriceMoveTimestamp: data.dormancyMetrics.lastPriceMoveTimestamp,
+              data.dormancyMetrics.lastLargeTradeTimestamp !== null
+                ? new Date(data.dormancyMetrics.lastLargeTradeTimestamp)
+                : null,
+            lastPriceMoveTimestamp:
+              data.dormancyMetrics.lastPriceMoveTimestamp !== null
+                ? new Date(data.dormancyMetrics.lastPriceMoveTimestamp)
+                : null,
 
             // Wallet flags
             walletIsSuspicious: data.walletFingerprint.isSuspicious,
@@ -186,7 +191,7 @@ class AlertPersistenceService {
   /**
    * Mark alert as notified
    */
-  public async markAsNotified(alertId: number): Promise<void> {
+  public async markAsNotified(alertId: string): Promise<void> {
     try {
       const prisma = db.getClient();
       await prisma.alert.update({
@@ -206,16 +211,19 @@ class AlertPersistenceService {
   /**
    * Dismiss alert
    */
-  public async dismissAlert(alertId: number, notes?: string): Promise<void> {
+  public async dismissAlert(alertId: string, notes?: string): Promise<void> {
     try {
       const prisma = db.getClient();
+      const updateData: { dismissed: boolean; dismissedAt: Date; notes?: string } = {
+        dismissed: true,
+        dismissedAt: new Date(),
+      };
+      if (notes !== undefined) {
+        updateData.notes = notes;
+      }
       await prisma.alert.update({
         where: { id: alertId },
-        data: {
-          dismissed: true,
-          dismissedAt: new Date(),
-          notes,
-        },
+        data: updateData,
       });
 
       logger.info({ alertId, notes }, 'Alert dismissed');
