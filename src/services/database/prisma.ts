@@ -36,40 +36,15 @@ class DatabaseService {
     try {
       logger.info('Connecting to database...');
 
+      // Configure logging based on environment
+      const logConfig =
+        process.env['NODE_ENV'] === 'development'
+          ? ['query', 'error', 'warn'] as const
+          : ['error', 'warn'] as const;
+
       this.prisma = new PrismaClient({
-        log: [
-          { emit: 'event', level: 'query' },
-          { emit: 'event', level: 'error' },
-          { emit: 'event', level: 'warn' },
-        ],
+        log: logConfig.map((level) => ({ emit: 'stdout' as const, level })),
         errorFormat: 'minimal',
-      });
-
-      // Attach query logging in development
-      if (process.env['NODE_ENV'] === 'development') {
-        this.prisma.$on(
-          'query',
-          (e: { query: string; params: string; duration: number }) => {
-            logger.debug(
-              {
-                query: e.query,
-                params: e.params,
-                duration: e.duration,
-              },
-              'Database query'
-            );
-          }
-        );
-      }
-
-      // Attach error logging
-      this.prisma.$on('error', (e: { message: string; target: string }) => {
-        logger.error({ error: e }, 'Database error event');
-      });
-
-      // Attach warning logging
-      this.prisma.$on('warn', (e: { message: string }) => {
-        logger.warn({ warning: e }, 'Database warning event');
       });
 
       // Test connection

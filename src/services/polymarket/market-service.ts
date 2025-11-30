@@ -88,15 +88,20 @@ class MarketService {
           category: string | null;
           enabled: boolean;
           notes: string | null;
-        }) => ({
-          id: m.id,
-          question: m.question,
-          slug: m.slug,
-          tier: m.tier as 1 | 2 | 3,
-          category: m.category as 'politics' | 'corporate' | 'sports' | 'misc',
-          enabled: m.enabled,
-          notes: m.notes ?? undefined,
-        })
+        }): MarketConfig => {
+          const config: MarketConfig = {
+            id: m.id,
+            question: m.question,
+            slug: m.slug,
+            tier: m.tier as 1 | 2 | 3,
+            category: m.category as 'politics' | 'corporate' | 'sports' | 'misc',
+            enabled: m.enabled,
+          };
+          if (m.notes !== null) {
+            config.notes = m.notes;
+          }
+          return config;
+        }
       );
 
       logger.info(
