@@ -53,7 +53,8 @@ class DatabaseService {
       this.isConnected = true;
       logger.info('✅ Database connected successfully');
     } catch (error) {
-      logger.error({ error }, 'Failed to connect to database');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ error: errorMessage }, 'Failed to connect to database');
       throw new Error(
         `Database connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
