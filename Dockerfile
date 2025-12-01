@@ -57,6 +57,9 @@ COPY --from=deps --chown=botuser:nodejs /app/node_modules ./node_modules
 # Copy built application from builder stage
 COPY --from=builder --chown=botuser:nodejs /app/dist ./dist
 COPY --from=builder --chown=botuser:nodejs /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder --chown=botuser:nodejs /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder --chown=botuser:nodejs /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder --chown=botuser:nodejs /app/prisma ./prisma
 
 # Copy package.json for version info
 COPY --chown=botuser:nodejs package.json ./
@@ -75,5 +78,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/health/live', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Start application
-CMD ["node", "dist/index.js"]
+# Run database migrations and start application
+CMD npx prisma db push --skip-generate && node dist/index.js
