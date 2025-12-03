@@ -1,5 +1,7 @@
 import 'dotenv/config';
 
+console.log('[STARTUP] Application starting...');
+
 import Fastify from 'fastify';
 
 import { registerHealthRoutes } from './api/health.js';

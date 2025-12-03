@@ -18,7 +18,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().url().startsWith('postgresql://'),
 
   // Redis
-  REDIS_URL: z.string().url().startsWith('redis://'),
+  REDIS_URL: z.string().startsWith('redis://'),
 
   // Polymarket
   POLYMARKET_WS_URL: z
