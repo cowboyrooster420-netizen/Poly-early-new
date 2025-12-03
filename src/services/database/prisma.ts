@@ -39,8 +39,8 @@ class DatabaseService {
       // Configure logging based on environment
       const logConfig =
         process.env['NODE_ENV'] === 'development'
-          ? ['query', 'error', 'warn'] as const
-          : ['error', 'warn'] as const;
+          ? (['query', 'error', 'warn'] as const)
+          : (['error', 'warn'] as const);
 
       this.prisma = new PrismaClient({
         log: logConfig.map((level) => ({ emit: 'stdout' as const, level })),
@@ -53,7 +53,10 @@ class DatabaseService {
       this.isConnected = true;
       logger.info('✅ Database connected successfully');
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error('[DATABASE ERROR]', errorMessage);
+      console.error('[DATABASE FULL ERROR]', error);
       logger.error({ error: errorMessage }, 'Failed to connect to database');
       throw new Error(
         `Database connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`
