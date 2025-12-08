@@ -193,8 +193,9 @@ class TelegramNotifierService {
 
     try {
       const message =
-        '✅ *Telegram notifications are working!*\n\n' +
-        'You will receive alerts here when insider signals are detected.';
+        '✅ *Polymarket Insider Bot Started!*\n\n' +
+        'You will receive alerts here when insider signals are detected.\n' +
+        'Hourly heartbeat messages will confirm the bot is running.';
 
       await this.client.post('/sendMessage', {
         chat_id: this.chatId,
@@ -206,6 +207,36 @@ class TelegramNotifierService {
       return true;
     } catch (error) {
       logger.error({ error }, 'Failed to send test Telegram message');
+      return false;
+    }
+  }
+
+  /**
+   * Send hourly heartbeat notification
+   */
+  public async sendHeartbeat(): Promise<boolean> {
+    if (!this.isConfigured() || this.client === null) {
+      return false;
+    }
+
+    try {
+      const now = new Date();
+      const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
+
+      const message =
+        `💓 *Heartbeat*\n\n` +
+        `Bot is running normally.\n` +
+        `Time: ${timestamp} UTC`;
+
+      await this.client.post('/sendMessage', {
+        chat_id: this.chatId,
+        text: message,
+        parse_mode: 'Markdown',
+      });
+
+      return true;
+    } catch (error) {
+      logger.error({ error }, 'Failed to send heartbeat message');
       return false;
     }
   }
