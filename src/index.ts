@@ -5,6 +5,7 @@ console.log('[STARTUP] Application starting...');
 import Fastify from 'fastify';
 
 import { registerHealthRoutes } from './api/health.js';
+import { registerMarketRoutes } from './api/markets.js';
 import { getEnv } from './config/env.js';
 import { redis } from './services/cache/redis.js';
 import { db } from './services/database/prisma.js';
@@ -67,6 +68,9 @@ async function main(): Promise<void> {
 
   // Register health check routes
   await registerHealthRoutes(app);
+
+  // Register market management routes
+  await registerMarketRoutes(app);
 
   // Initialize database connection
   try {
