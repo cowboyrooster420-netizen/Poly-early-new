@@ -83,7 +83,12 @@ class TelegramCommandHandler {
     // Poll every 5 seconds
     this.pollInterval = setInterval(() => {
       this.pollUpdates().catch((err) => {
-        logger.error({ error: err }, 'Error polling Telegram updates');
+        const errorMsg = axios.isAxiosError(err)
+          ? `${err.message} - ${err.response?.status} - ${JSON.stringify(err.response?.data)}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+        logger.error({ error: errorMsg }, 'Error polling Telegram updates');
       });
     }, 5000);
   }
