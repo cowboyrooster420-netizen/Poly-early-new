@@ -5,6 +5,7 @@ console.log('[STARTUP] Application starting...');
 import Fastify from 'fastify';
 
 import { registerHealthRoutes } from './api/health.js';
+import { registerMarketRoutes } from './api/markets.js';
 import { getEnv } from './config/env.js';
 import { redis } from './services/cache/redis.js';
 import { db } from './services/database/prisma.js';
@@ -12,6 +13,7 @@ import { marketService } from './services/polymarket/market-service.js';
 import { tradeService } from './services/polymarket/trade-service.js';
 import { polymarketWs } from './services/polymarket/websocket.js';
 import { telegramNotifier } from './services/notifications/telegram-notifier.js';
+import { telegramCommands } from './services/notifications/telegram-commands.js';
 import { logger } from './utils/logger.js';
 
 /**
@@ -67,6 +69,9 @@ async function main(): Promise<void> {
 
   // Register health check routes
   await registerHealthRoutes(app);
+
+  // Register market management routes
+  await registerMarketRoutes(app);
 
   // Initialize database connection
   try {
@@ -147,6 +152,9 @@ async function main(): Promise<void> {
         });
     }, ONE_HOUR);
     logger.info('⏰ Hourly Telegram heartbeat scheduled');
+
+    // Start Telegram command listener
+    telegramCommands.start();
   }
 
   // Graceful shutdown handler
@@ -157,6 +165,9 @@ async function main(): Promise<void> {
       // Close HTTP server
       await app.close();
       logger.info('HTTP server closed');
+
+      // Stop Telegram command listener
+      telegramCommands.stop();
 
       // Close WebSocket connection
       await polymarketWs.disconnect();
