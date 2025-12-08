@@ -11,6 +11,7 @@ import { db } from './services/database/prisma.js';
 import { marketService } from './services/polymarket/market-service.js';
 import { tradeService } from './services/polymarket/trade-service.js';
 import { polymarketWs } from './services/polymarket/websocket.js';
+import { telegramNotifier } from './services/notifications/telegram-notifier.js';
 import { logger } from './utils/logger.js';
 
 /**
@@ -123,6 +124,29 @@ async function main(): Promise<void> {
   } catch (error) {
     logger.error({ error }, '❌ Failed to start server');
     process.exit(1);
+  }
+
+  // Send startup notification to Telegram
+  if (telegramNotifier.isConfigured()) {
+    await telegramNotifier.sendTestMessage();
+    logger.info('📨 Startup notification sent to Telegram');
+
+    // Set up hourly heartbeat
+    const ONE_HOUR = 60 * 60 * 1000;
+    setInterval(() => {
+      const now = new Date().toISOString();
+      telegramNotifier
+        .sendHeartbeat()
+        .then((success) => {
+          if (success) {
+            logger.info({ timestamp: now }, '💓 Hourly heartbeat sent');
+          }
+        })
+        .catch((err) => {
+          logger.error({ error: err }, 'Failed to send hourly heartbeat');
+        });
+    }, ONE_HOUR);
+    logger.info('⏰ Hourly Telegram heartbeat scheduled');
   }
 
   // Graceful shutdown handler
