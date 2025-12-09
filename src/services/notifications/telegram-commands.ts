@@ -45,6 +45,7 @@ class TelegramCommandHandler {
   private lastUpdateId = 0;
   private isRunning = false;
   private pollInterval: NodeJS.Timeout | null = null;
+  private startupTimeout: NodeJS.Timeout | null = null;
 
   private constructor() {
     this.botToken = env.TELEGRAM_BOT_TOKEN ?? null;
@@ -80,23 +81,39 @@ class TelegramCommandHandler {
     this.isRunning = true;
     logger.info('🤖 Telegram command handler started');
 
-    // Poll every 5 seconds
-    this.pollInterval = setInterval(() => {
-      this.pollUpdates().catch((err) => {
-        const errorMsg = axios.isAxiosError(err)
-          ? `${err.message} - ${err.response?.status} - ${JSON.stringify(err.response?.data)}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-        logger.error({ error: errorMsg }, 'Error polling Telegram updates');
-      });
-    }, 5000);
+    // Delay first poll to allow old instances to shut down during deployments
+    this.startupTimeout = setTimeout(() => {
+      if (!this.isRunning) return;
+
+      // Poll every 5 seconds
+      this.pollInterval = setInterval(() => {
+        this.pollUpdates().catch((err) => {
+          // Handle 409 conflict (another instance is polling) silently with backoff
+          if (axios.isAxiosError(err) && err.response?.status === 409) {
+            logger.warn(
+              'Telegram polling conflict detected - another instance may be running. Will retry...'
+            );
+            return;
+          }
+          const errorMsg = axios.isAxiosError(err)
+            ? `${err.message} - ${err.response?.status} - ${JSON.stringify(err.response?.data)}`
+            : err instanceof Error
+              ? err.message
+              : String(err);
+          logger.error({ error: errorMsg }, 'Error polling Telegram updates');
+        });
+      }, 5000);
+    }, 10000); // 10 second startup delay
   }
 
   /**
    * Stop listening
    */
   public stop(): void {
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
