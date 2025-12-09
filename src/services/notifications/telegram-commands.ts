@@ -73,17 +73,27 @@ class TelegramCommandHandler {
   /**
    * Start listening for commands
    */
-  public start(): void {
+  public async start(): Promise<void> {
     if (!this.isConfigured() || this.isRunning) {
       return;
     }
 
     this.isRunning = true;
-    logger.info('🤖 Telegram command handler started');
+    logger.info('🤖 Telegram command handler starting...');
+
+    // Clear any existing webhook and drop pending updates to avoid conflicts
+    try {
+      await this.client!.post('/deleteWebhook', { drop_pending_updates: true });
+      logger.info('Cleared Telegram webhook (if any)');
+    } catch (err) {
+      logger.warn({ error: err }, 'Failed to clear webhook');
+    }
 
     // Delay first poll to allow old instances to shut down during deployments
     this.startupTimeout = setTimeout(() => {
       if (!this.isRunning) return;
+
+      logger.info('🤖 Telegram command handler started polling');
 
       // Poll every 5 seconds
       this.pollInterval = setInterval(() => {

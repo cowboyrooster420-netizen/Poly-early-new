@@ -154,7 +154,7 @@ async function main(): Promise<void> {
     logger.info('⏰ Hourly Telegram heartbeat scheduled');
 
     // Start Telegram command listener
-    telegramCommands.start();
+    await telegramCommands.start();
   }
 
   // Graceful shutdown handler
