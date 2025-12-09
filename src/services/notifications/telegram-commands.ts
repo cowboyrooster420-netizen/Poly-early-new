@@ -94,41 +94,53 @@ class TelegramCommandHandler {
       if (!this.isRunning) return;
 
       logger.info('🤖 Telegram command handler started polling');
-
-      // Poll every 5 seconds
-      this.pollInterval = setInterval(() => {
-        this.pollUpdates().catch((err) => {
-          // Handle 409 conflict (another instance is polling) silently with backoff
-          if (axios.isAxiosError(err) && err.response?.status === 409) {
-            logger.warn(
-              'Telegram polling conflict detected - another instance may be running. Will retry...'
-            );
-            return;
-          }
-          const errorMsg = axios.isAxiosError(err)
-            ? `${err.message} - ${err.response?.status} - ${JSON.stringify(err.response?.data)}`
-            : err instanceof Error
-              ? err.message
-              : String(err);
-          logger.error({ error: errorMsg }, 'Error polling Telegram updates');
-        });
-      }, 5000);
+      this.startPollingLoop();
     }, 10000); // 10 second startup delay
+  }
+
+  /**
+   * Start the polling loop - chains polls sequentially to avoid overlapping requests
+   */
+  private startPollingLoop(): void {
+    if (!this.isRunning) return;
+
+    this.pollUpdates()
+      .catch((err) => {
+        // Handle 409 conflict (another instance is polling) silently
+        if (axios.isAxiosError(err) && err.response?.status === 409) {
+          logger.warn(
+            'Telegram polling conflict detected - another instance may be running. Will retry...'
+          );
+          return;
+        }
+        const errorMsg = axios.isAxiosError(err)
+          ? `${err.message} - ${err.response?.status} - ${JSON.stringify(err.response?.data)}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
+        logger.error({ error: errorMsg }, 'Error polling Telegram updates');
+      })
+      .finally(() => {
+        // Schedule next poll after current one completes (with small delay)
+        if (this.isRunning) {
+          this.pollInterval = setTimeout(() => this.startPollingLoop(), 1000);
+        }
+      });
   }
 
   /**
    * Stop listening
    */
   public stop(): void {
+    this.isRunning = false;
     if (this.startupTimeout) {
       clearTimeout(this.startupTimeout);
       this.startupTimeout = null;
     }
     if (this.pollInterval) {
-      clearInterval(this.pollInterval);
+      clearTimeout(this.pollInterval);
       this.pollInterval = null;
     }
-    this.isRunning = false;
     logger.info('Telegram command handler stopped');
   }
 
