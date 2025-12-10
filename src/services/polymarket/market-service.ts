@@ -47,9 +47,9 @@ class MarketService {
         this.monitoredMarkets.set(market.id, market);
       }
 
-      // Subscribe to all markets via WebSocket
+      // Subscribe to all markets via WebSocket using conditionId
       for (const market of markets) {
-        await polymarketWs.subscribeToMarket(market.id);
+        await polymarketWs.subscribeToMarket(market.conditionId);
       }
 
       this.isInitialized = true;
@@ -82,6 +82,7 @@ class MarketService {
       const markets: MarketConfig[] = dbMarkets.map(
         (m: {
           id: string;
+          conditionId: string;
           question: string;
           slug: string;
           tier: number;
@@ -91,6 +92,7 @@ class MarketService {
         }): MarketConfig => {
           const config: MarketConfig = {
             id: m.id,
+            conditionId: m.conditionId,
             question: m.question,
             slug: m.slug,
             tier: m.tier as 1 | 2 | 3,
@@ -152,10 +154,32 @@ class MarketService {
   }
 
   /**
-   * Check if a market is being monitored
+   * Check if a market is being monitored (by id or conditionId)
    */
-  public isMonitored(marketId: string): boolean {
-    return this.monitoredMarkets.has(marketId);
+  public isMonitored(marketIdOrConditionId: string): boolean {
+    // Check by id first
+    if (this.monitoredMarkets.has(marketIdOrConditionId)) {
+      return true;
+    }
+    // Check by conditionId
+    for (const market of this.monitoredMarkets.values()) {
+      if (market.conditionId === marketIdOrConditionId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Get market by conditionId
+   */
+  public getMarketByConditionId(conditionId: string): MarketConfig | undefined {
+    for (const market of this.monitoredMarkets.values()) {
+      if (market.conditionId === conditionId) {
+        return market;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -168,8 +192,8 @@ class MarketService {
       // Add to memory
       this.monitoredMarkets.set(market.id, market);
 
-      // Subscribe to WebSocket
-      await polymarketWs.subscribeToMarket(market.id);
+      // Subscribe to WebSocket using conditionId
+      await polymarketWs.subscribeToMarket(market.conditionId);
 
       // Cache in Redis (30 day TTL)
       await redis.setJSON(`market:${market.id}`, market, 30 * 24 * 60 * 60);
@@ -188,11 +212,16 @@ class MarketService {
     try {
       logger.info({ marketId }, 'Removing market from monitoring');
 
+      // Get conditionId before removing
+      const market = this.monitoredMarkets.get(marketId);
+
       // Remove from memory
       this.monitoredMarkets.delete(marketId);
 
-      // Unsubscribe from WebSocket
-      await polymarketWs.unsubscribeFromMarket(marketId);
+      // Unsubscribe from WebSocket using conditionId
+      if (market) {
+        await polymarketWs.unsubscribeFromMarket(market.conditionId);
+      }
 
       // Remove from Redis cache
       await redis.delete(`market:${marketId}`);
