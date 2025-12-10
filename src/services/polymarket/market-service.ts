@@ -47,10 +47,30 @@ class MarketService {
         this.monitoredMarkets.set(market.id, market);
       }
 
-      // Subscribe to all markets via WebSocket using conditionId
+      // Queue all markets for WebSocket subscription using CLOB token IDs
+      let subscribedCount = 0;
       for (const market of markets) {
-        await polymarketWs.subscribeToMarket(market.conditionId);
+        if (market.clobTokenIdYes) {
+          await polymarketWs.subscribeToMarket(market.clobTokenIdYes);
+          subscribedCount++;
+        }
+        if (market.clobTokenIdNo) {
+          await polymarketWs.subscribeToMarket(market.clobTokenIdNo);
+          subscribedCount++;
+        }
+        if (!market.clobTokenIdYes && !market.clobTokenIdNo) {
+          logger.warn(
+            { marketId: market.id },
+            'Market missing CLOB token IDs - cannot subscribe to WebSocket'
+          );
+        }
       }
+
+      // Send the batched subscription (will be sent on WebSocket connect)
+      logger.info(
+        { marketCount: markets.length, assetCount: subscribedCount },
+        'Queued markets for WebSocket subscription'
+      );
 
       this.isInitialized = true;
       logger.info({ count: markets.length }, '✅ Market service initialized');
@@ -83,6 +103,8 @@ class MarketService {
         (m: {
           id: string;
           conditionId: string;
+          clobTokenIdYes: string | null;
+          clobTokenIdNo: string | null;
           question: string;
           slug: string;
           tier: number;
@@ -93,6 +115,8 @@ class MarketService {
           const config: MarketConfig = {
             id: m.id,
             conditionId: m.conditionId,
+            clobTokenIdYes: m.clobTokenIdYes ?? undefined,
+            clobTokenIdNo: m.clobTokenIdNo ?? undefined,
             question: m.question,
             slug: m.slug,
             tier: m.tier as 1 | 2 | 3,
@@ -154,16 +178,20 @@ class MarketService {
   }
 
   /**
-   * Check if a market is being monitored (by id or conditionId)
+   * Check if a market is being monitored (by id, conditionId, or clobTokenId)
    */
-  public isMonitored(marketIdOrConditionId: string): boolean {
+  public isMonitored(identifier: string): boolean {
     // Check by id first
-    if (this.monitoredMarkets.has(marketIdOrConditionId)) {
+    if (this.monitoredMarkets.has(identifier)) {
       return true;
     }
-    // Check by conditionId
+    // Check by conditionId or clobTokenIds
     for (const market of this.monitoredMarkets.values()) {
-      if (market.conditionId === marketIdOrConditionId) {
+      if (
+        market.conditionId === identifier ||
+        market.clobTokenIdYes === identifier ||
+        market.clobTokenIdNo === identifier
+      ) {
         return true;
       }
     }
@@ -183,6 +211,18 @@ class MarketService {
   }
 
   /**
+   * Get market by CLOB token ID (asset ID)
+   */
+  public getMarketByAssetId(assetId: string): MarketConfig | undefined {
+    for (const market of this.monitoredMarkets.values()) {
+      if (market.clobTokenIdYes === assetId || market.clobTokenIdNo === assetId) {
+        return market;
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Add a market to monitoring
    */
   public async addMarket(market: MarketConfig): Promise<void> {
@@ -192,8 +232,15 @@ class MarketService {
       // Add to memory
       this.monitoredMarkets.set(market.id, market);
 
-      // Subscribe to WebSocket using conditionId
-      await polymarketWs.subscribeToMarket(market.conditionId);
+      // Subscribe to WebSocket using CLOB token IDs
+      if (market.clobTokenIdYes) {
+        await polymarketWs.subscribeToMarket(market.clobTokenIdYes);
+      }
+      if (market.clobTokenIdNo) {
+        await polymarketWs.subscribeToMarket(market.clobTokenIdNo);
+      }
+      // Send the updated subscription list
+      polymarketWs.sendSubscriptions();
 
       // Cache in Redis (30 day TTL)
       await redis.setJSON(`market:${market.id}`, market, 30 * 24 * 60 * 60);
@@ -218,9 +265,14 @@ class MarketService {
       // Remove from memory
       this.monitoredMarkets.delete(marketId);
 
-      // Unsubscribe from WebSocket using conditionId
+      // Unsubscribe from WebSocket using CLOB token IDs
       if (market) {
-        await polymarketWs.unsubscribeFromMarket(market.conditionId);
+        if (market.clobTokenIdYes) {
+          await polymarketWs.unsubscribeFromMarket(market.clobTokenIdYes);
+        }
+        if (market.clobTokenIdNo) {
+          await polymarketWs.unsubscribeFromMarket(market.clobTokenIdNo);
+        }
       }
 
       // Remove from Redis cache
