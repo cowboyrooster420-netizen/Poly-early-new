@@ -129,30 +129,19 @@ class PolymarketWebSocketService {
   }
 
   /**
-   * Subscribe to a market's trade feed
+   * Subscribe to a market's trade feed (adds to set, batched on connect)
    */
-  public async subscribeToMarket(marketId: string): Promise<void> {
-    // Always add to set so we can subscribe when connected/reconnected
-    this.subscribedMarkets.add(marketId);
+  public async subscribeToMarket(assetId: string): Promise<void> {
+    // Add to set - actual subscription happens via resubscribeToMarkets()
+    this.subscribedMarkets.add(assetId);
+    logger.debug({ assetId }, 'Added asset to subscription queue');
+  }
 
-    if (!this.isConnected || this.ws === null) {
-      logger.debug({ marketId }, 'WebSocket not connected, will subscribe when ready');
-      return;
-    }
-
-    try {
-      const message = {
-        type: 'subscribe',
-        market: marketId,
-        channel: 'trades',
-      };
-
-      this.ws.send(JSON.stringify(message));
-      logger.info({ marketId }, 'Subscribed to market');
-    } catch (error) {
-      logger.error({ error, marketId }, 'Failed to subscribe to market');
-      throw error;
-    }
+  /**
+   * Send the batched subscription message (call after adding markets)
+   */
+  public sendSubscriptions(): void {
+    this.resubscribeToMarkets();
   }
 
   /**
@@ -363,10 +352,16 @@ class PolymarketWebSocketService {
 
   /**
    * Resubscribe to all previously subscribed markets
+   * Sends all asset IDs in a single subscription message (Polymarket format)
    */
   private resubscribeToMarkets(): void {
     if (this.subscribedMarkets.size === 0) {
       logger.debug('No markets to resubscribe to');
+      return;
+    }
+
+    if (this.ws === null || !this.isConnected) {
+      logger.warn('Cannot resubscribe: WebSocket not connected');
       return;
     }
 
@@ -375,22 +370,23 @@ class PolymarketWebSocketService {
       'Resubscribing to markets after WebSocket connect'
     );
 
-    for (const marketId of this.subscribedMarkets) {
-      if (this.ws !== null && this.isConnected) {
-        try {
-          const message = {
-            type: 'subscribe',
-            market: marketId,
-            channel: 'trades',
-          };
-          this.ws.send(JSON.stringify(message));
-        } catch (error) {
-          logger.error({ error, marketId }, 'Failed to resubscribe to market');
-        }
-      }
-    }
+    try {
+      // Polymarket expects all asset IDs in a single subscribe message
+      const assetIds = Array.from(this.subscribedMarkets);
+      const message = {
+        auth: null,
+        type: 'market',
+        assets_ids: assetIds,
+      };
 
-    logger.info('Resubscription complete');
+      this.ws.send(JSON.stringify(message));
+      logger.info(
+        { assetCount: assetIds.length },
+        'Sent subscription message to Polymarket WebSocket'
+      );
+    } catch (error) {
+      logger.error({ error }, 'Failed to send subscription message');
+    }
   }
 }
 

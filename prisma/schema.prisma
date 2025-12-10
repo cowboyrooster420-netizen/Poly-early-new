@@ -23,6 +23,10 @@ model Market {
   slug         String   @unique
   conditionId  String   @unique
 
+  // CLOB token IDs for WebSocket subscriptions
+  clobTokenIdYes String?
+  clobTokenIdNo  String?
+
   // Market metrics
   openInterest Decimal  @db.Decimal(20, 2)
   volume       Decimal  @db.Decimal(20, 2)

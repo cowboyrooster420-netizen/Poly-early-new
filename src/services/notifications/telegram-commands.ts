@@ -25,6 +25,15 @@ interface GammaMarket {
   volume: string;
   active: boolean;
   closed: boolean;
+  clobTokenIds?: string[];
+}
+
+interface ClobMarket {
+  condition_id: string;
+  tokens: Array<{
+    token_id: string;
+    outcome: string;
+  }>;
 }
 
 interface GammaEvent {
@@ -263,12 +272,46 @@ class TelegramCommandHandler {
           continue;
         }
 
+        // Fetch CLOB token IDs from CLOB API
+        let clobTokenIdYes: string | null = null;
+        let clobTokenIdNo: string | null = null;
+
+        try {
+          const clobResponse = await axios.get<ClobMarket>(
+            `https://clob.polymarket.com/markets/${market.conditionId}`,
+            {
+              headers: { 'User-Agent': 'PolymarketInsiderBot/1.0' },
+              timeout: 10000,
+            }
+          );
+
+          for (const token of clobResponse.data.tokens || []) {
+            if (token.outcome === 'Yes') {
+              clobTokenIdYes = token.token_id;
+            } else if (token.outcome === 'No') {
+              clobTokenIdNo = token.token_id;
+            }
+          }
+
+          logger.info(
+            { conditionId: market.conditionId, clobTokenIdYes, clobTokenIdNo },
+            'Fetched CLOB token IDs'
+          );
+        } catch (clobError) {
+          logger.warn(
+            { error: clobError, conditionId: market.conditionId },
+            'Failed to fetch CLOB token IDs - WebSocket subscription may not work'
+          );
+        }
+
         await prisma.market.create({
           data: {
             id: market.id,
             question: market.question,
             slug: market.slug || `${slug}-${market.id.slice(0, 8)}`,
             conditionId: market.conditionId,
+            clobTokenIdYes,
+            clobTokenIdNo,
             openInterest: 0,
             volume: parseFloat(market.volume) || 0,
             active: market.active,
