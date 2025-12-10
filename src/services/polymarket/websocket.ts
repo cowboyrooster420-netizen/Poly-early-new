@@ -132,8 +132,11 @@ class PolymarketWebSocketService {
    * Subscribe to a market's trade feed
    */
   public async subscribeToMarket(marketId: string): Promise<void> {
+    // Always add to set so we can subscribe when connected/reconnected
+    this.subscribedMarkets.add(marketId);
+
     if (!this.isConnected || this.ws === null) {
-      logger.warn({ marketId }, 'Cannot subscribe: WebSocket not connected');
+      logger.debug({ marketId }, 'WebSocket not connected, will subscribe when ready');
       return;
     }
 
@@ -145,8 +148,6 @@ class PolymarketWebSocketService {
       };
 
       this.ws.send(JSON.stringify(message));
-      this.subscribedMarkets.add(marketId);
-
       logger.info({ marketId }, 'Subscribed to market');
     } catch (error) {
       logger.error({ error, marketId }, 'Failed to subscribe to market');
@@ -364,9 +365,32 @@ class PolymarketWebSocketService {
    * Resubscribe to all previously subscribed markets
    */
   private resubscribeToMarkets(): void {
-    for (const marketId of this.subscribedMarkets) {
-      void this.subscribeToMarket(marketId);
+    if (this.subscribedMarkets.size === 0) {
+      logger.debug('No markets to resubscribe to');
+      return;
     }
+
+    logger.info(
+      { count: this.subscribedMarkets.size },
+      'Resubscribing to markets after WebSocket connect'
+    );
+
+    for (const marketId of this.subscribedMarkets) {
+      if (this.ws !== null && this.isConnected) {
+        try {
+          const message = {
+            type: 'subscribe',
+            market: marketId,
+            channel: 'trades',
+          };
+          this.ws.send(JSON.stringify(message));
+        } catch (error) {
+          logger.error({ error, marketId }, 'Failed to resubscribe to market');
+        }
+      }
+    }
+
+    logger.info('Resubscription complete');
   }
 }
 
