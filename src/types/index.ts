@@ -129,8 +129,8 @@ export type AlertSeverity = 'high' | 'medium' | 'low';
 export interface MarketConfig {
   id: string;
   conditionId: string;
-  clobTokenIdYes?: string;
-  clobTokenIdNo?: string;
+  clobTokenIdYes?: string | undefined;
+  clobTokenIdNo?: string | undefined;
   question: string;
   slug: string;
   tier: 1 | 2 | 3;
