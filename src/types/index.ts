@@ -128,6 +128,7 @@ export type AlertSeverity = 'high' | 'medium' | 'low';
 
 export interface MarketConfig {
   id: string;
+  conditionId: string;
   question: string;
   slug: string;
   tier: 1 | 2 | 3;
