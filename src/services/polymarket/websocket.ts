@@ -259,13 +259,19 @@ class PolymarketWebSocketService {
    * [{"event_type": "price_change", "asset_id": "...", ...}]
    */
   private handleMessage(data: Buffer): void {
-    try {
-      const rawMessage = data.toString();
-      const parsed = JSON.parse(rawMessage) as unknown;
+    const rawMessage = data.toString();
 
-      // Log raw message for debugging (truncate if too long)
-      const truncated = rawMessage.length > 500 ? rawMessage.slice(0, 500) + '...' : rawMessage;
-      logger.debug({ rawMessage: truncated }, 'WebSocket message received');
+    // Skip empty messages or ping/pong frames
+    if (!rawMessage || rawMessage.trim() === '') {
+      return;
+    }
+
+    // Log ALL incoming messages at info level for debugging
+    const truncated = rawMessage.length > 300 ? rawMessage.slice(0, 300) + '...' : rawMessage;
+    logger.info(`WebSocket raw message: ${truncated}`);
+
+    try {
+      const parsed = JSON.parse(rawMessage) as unknown;
 
       // Polymarket sends arrays of events
       if (Array.isArray(parsed)) {
@@ -276,15 +282,16 @@ class PolymarketWebSocketService {
         // Handle single object messages (like subscription confirmations)
         const obj = parsed as Record<string, unknown>;
         if (obj['error']) {
-          logger.error({ message: obj }, 'WebSocket error message');
+          logger.error({ message: obj }, 'WebSocket error message from server');
         } else {
-          logger.debug({ messageType: typeof obj['type'] === 'string' ? obj['type'] : 'unknown' }, 'Non-array message received');
+          logger.info(`Non-array message: ${JSON.stringify(obj)}`);
         }
+      } else {
+        logger.info(`Unexpected message type: ${typeof parsed}`);
       }
-    } catch (error) {
-      const rawMessage = data.toString();
-      const truncated = rawMessage.length > 200 ? rawMessage.slice(0, 200) + '...' : rawMessage;
-      logger.error({ error, rawMessage: truncated }, 'Failed to parse WebSocket message');
+    } catch {
+      // Not valid JSON - might be a text message like "ping" or subscription confirmation
+      logger.warn(`Non-JSON WebSocket message: ${truncated}`);
     }
   }
 
