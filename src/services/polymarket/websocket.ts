@@ -275,10 +275,10 @@ class PolymarketWebSocketService {
       } else if (typeof parsed === 'object' && parsed !== null) {
         // Handle single object messages (like subscription confirmations)
         const obj = parsed as Record<string, unknown>;
-        if (obj.error) {
+        if (obj['error']) {
           logger.error({ message: obj }, 'WebSocket error message');
         } else {
-          logger.debug({ messageType: typeof obj.type === 'string' ? obj.type : 'unknown' }, 'Non-array message received');
+          logger.debug({ messageType: typeof obj['type'] === 'string' ? obj['type'] : 'unknown' }, 'Non-array message received');
         }
       }
     } catch (error) {
