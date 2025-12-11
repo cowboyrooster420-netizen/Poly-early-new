@@ -36,38 +36,53 @@ class TradeService {
    */
   public async processTrade(trade: PolymarketTrade): Promise<void> {
     try {
-      // Check if market is monitored
-      if (!marketService.isMonitored(trade.marketId)) {
+      // The trade.marketId from WebSocket is actually the asset_id (CLOB token ID)
+      // We need to look up the actual market using this asset ID
+      const assetId = trade.marketId;
+      const market = marketService.getMarketByAssetId(assetId);
+
+      if (!market) {
         logger.debug(
-          { marketId: trade.marketId },
-          'Ignoring trade for unmonitored market'
+          { assetId },
+          'Ignoring trade for unmonitored market (asset not found)'
         );
         return;
       }
 
+      // Determine outcome based on which token ID matched
+      const outcome: 'yes' | 'no' = market.clobTokenIdYes === assetId ? 'yes' : 'no';
+
+      // Create a trade object with the correct market ID for database storage
+      const tradeWithMarketId: PolymarketTrade = {
+        ...trade,
+        marketId: market.id, // Use actual market ID from database
+        outcome,
+      };
+
       // Log trade details
       logger.info(
         {
-          tradeId: trade.id,
-          marketId: trade.marketId,
-          side: trade.side,
-          size: trade.size,
-          price: trade.price,
-          outcome: trade.outcome,
-          maker: trade.maker.substring(0, 8) + '...',
-          taker: trade.taker.substring(0, 8) + '...',
+          tradeId: tradeWithMarketId.id,
+          marketId: market.id,
+          assetId,
+          side: tradeWithMarketId.side,
+          size: tradeWithMarketId.size,
+          price: tradeWithMarketId.price,
+          outcome,
+          maker: tradeWithMarketId.maker.substring(0, 8) + '...',
+          taker: tradeWithMarketId.taker.substring(0, 8) + '...',
         },
         'Processing trade'
       );
 
       // Store trade to database
-      await this.storeTrade(trade);
+      await this.storeTrade(tradeWithMarketId);
 
       // Increment counter
       this.tradeCount++;
 
       // Trigger signal detection pipeline
-      await this.detectSignals(trade);
+      await this.detectSignals(tradeWithMarketId);
     } catch (error) {
       logger.error({ error, tradeId: trade.id }, 'Failed to process trade');
       // Don't throw - we don't want one bad trade to kill the stream
