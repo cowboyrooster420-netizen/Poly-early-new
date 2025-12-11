@@ -1,8 +1,27 @@
 import { WebSocket } from 'ws';
 
 import { getEnv } from '../../config/env.js';
-import type { PolymarketTrade, WebSocketMessage } from '../../types/index.js';
+import type { PolymarketTrade } from '../../types/index.js';
 import { logger } from '../../utils/logger.js';
+
+/**
+ * Polymarket WebSocket event format
+ * Events come as arrays: [{"event_type": "...", "asset_id": "...", ...}]
+ */
+interface PolymarketWsEvent {
+  event_type: string;
+  asset_id?: string;
+  id?: string;
+  price?: string;
+  size?: string;
+  side?: string;
+  timestamp?: string;
+  maker_address?: string;
+  taker_address?: string;
+  // Order book fields
+  bids?: Array<{ price: string; size: string }>;
+  asks?: Array<{ price: string; size: string }>;
+}
 
 /**
  * Polymarket WebSocket service with automatic reconnection
@@ -236,40 +255,91 @@ class PolymarketWebSocketService {
 
   /**
    * Handle incoming WebSocket message
+   * Polymarket CLOB WebSocket sends arrays of events like:
+   * [{"event_type": "price_change", "asset_id": "...", ...}]
    */
   private handleMessage(data: Buffer): void {
     try {
-      const message: WebSocketMessage = JSON.parse(
-        data.toString()
-      ) as WebSocketMessage;
+      const rawMessage = data.toString();
+      const parsed = JSON.parse(rawMessage) as unknown;
 
-      logger.debug({ type: message.type }, 'WebSocket message received');
+      // Log raw message for debugging (truncate if too long)
+      const truncated = rawMessage.length > 500 ? rawMessage.slice(0, 500) + '...' : rawMessage;
+      logger.debug({ rawMessage: truncated }, 'WebSocket message received');
 
-      if (message.type === 'trade') {
-        this.handleTradeMessage(message);
-      } else if (message.type === 'error') {
-        logger.error({ message }, 'WebSocket error message');
+      // Polymarket sends arrays of events
+      if (Array.isArray(parsed)) {
+        for (const event of parsed) {
+          this.handlePolymarketEvent(event as PolymarketWsEvent);
+        }
+      } else if (typeof parsed === 'object' && parsed !== null) {
+        // Handle single object messages (like subscription confirmations)
+        const obj = parsed as Record<string, unknown>;
+        if (obj.error) {
+          logger.error({ message: obj }, 'WebSocket error message');
+        } else {
+          logger.debug({ messageType: typeof obj.type === 'string' ? obj.type : 'unknown' }, 'Non-array message received');
+        }
       }
     } catch (error) {
-      logger.error({ error }, 'Failed to parse WebSocket message');
+      const rawMessage = data.toString();
+      const truncated = rawMessage.length > 200 ? rawMessage.slice(0, 200) + '...' : rawMessage;
+      logger.error({ error, rawMessage: truncated }, 'Failed to parse WebSocket message');
     }
   }
 
   /**
-   * Handle trade message
+   * Handle a single Polymarket WebSocket event
    */
-  private handleTradeMessage(message: WebSocketMessage): void {
+  private handlePolymarketEvent(event: PolymarketWsEvent): void {
     try {
-      // Parse trade data
-      const trade = message.data as PolymarketTrade;
+      const eventType = event.event_type;
 
-      logger.debug(
+      if (eventType === 'trade' || eventType === 'last_trade_price') {
+        this.handleTradeEvent(event);
+      } else if (eventType === 'price_change') {
+        // Price changes - could be used for price tracking
+        logger.debug(
+          { assetId: event.asset_id, price: event.price },
+          'Price change event'
+        );
+      } else if (eventType === 'book') {
+        // Order book updates
+        logger.debug({ assetId: event.asset_id }, 'Order book event');
+      } else {
+        logger.debug({ eventType, assetId: event.asset_id }, 'Unknown event type');
+      }
+    } catch (error) {
+      logger.error({ error, event }, 'Failed to handle Polymarket event');
+    }
+  }
+
+  /**
+   * Handle trade event from Polymarket
+   */
+  private handleTradeEvent(event: PolymarketWsEvent): void {
+    try {
+      // Convert Polymarket event to our trade format
+      const trade: PolymarketTrade = {
+        id: event.id || `${event.asset_id}-${Date.now()}`,
+        marketId: event.asset_id || '', // This is the CLOB token ID
+        side: event.side === 'BUY' ? 'buy' : 'sell',
+        size: event.size || '0',
+        price: event.price || '0',
+        timestamp: event.timestamp ? new Date(event.timestamp).getTime() : Date.now(),
+        maker: event.maker_address || '',
+        taker: event.taker_address || '',
+        outcome: 'yes', // Will be determined by asset_id mapping
+      };
+
+      logger.info(
         {
-          marketId: trade.marketId,
+          assetId: event.asset_id,
           size: trade.size,
           price: trade.price,
+          side: trade.side,
         },
-        'Trade received'
+        'Trade event received'
       );
 
       // Call all registered trade handlers
@@ -281,7 +351,7 @@ class PolymarketWebSocketService {
         }
       }
     } catch (error) {
-      logger.error({ error }, 'Failed to handle trade message');
+      logger.error({ error, event }, 'Failed to handle trade event');
     }
   }
 
