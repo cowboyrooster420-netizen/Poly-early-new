@@ -240,6 +240,28 @@ class TelegramNotifierService {
       return false;
     }
   }
+
+  /**
+   * Send a raw text message to Telegram
+   * Used for crash notifications and other system messages
+   */
+  public async sendMessage(text: string): Promise<boolean> {
+    if (!this.isConfigured() || this.client === null) {
+      return false;
+    }
+
+    try {
+      await this.client.post('/sendMessage', {
+        chat_id: this.chatId,
+        text,
+        parse_mode: 'Markdown',
+      });
+      return true;
+    } catch (error) {
+      logger.error({ error }, 'Failed to send Telegram message');
+      return false;
+    }
+  }
 }
 
 // Export singleton instance
