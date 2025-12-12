@@ -192,15 +192,59 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  // Handle uncaught errors
+  // Handle uncaught errors - log details and notify before exit
   process.on('uncaughtException', (error: Error) => {
-    logger.fatal({ error }, 'Uncaught exception');
-    process.exit(1);
+    logger.fatal(
+      {
+        error,
+        stack: error.stack,
+        message: error.message,
+        name: error.name,
+      },
+      '💀 CRASH: Uncaught exception'
+    );
+
+    // Try to send Telegram notification before dying
+    if (telegramNotifier.isConfigured()) {
+      telegramNotifier
+        .sendMessage(`💀 BOT CRASHED!\n\nError: ${error.message}\n\nStack: ${error.stack?.slice(0, 500) || 'N/A'}`)
+        .catch(() => { /* ignore */ })
+        .finally(() => {
+          process.exit(1);
+        });
+      // Give it 3 seconds to send
+      setTimeout(() => process.exit(1), 3000);
+    } else {
+      process.exit(1);
+    }
   });
 
   process.on('unhandledRejection', (reason: unknown) => {
-    logger.fatal({ reason }, 'Unhandled promise rejection');
-    process.exit(1);
+    const errorMessage = reason instanceof Error ? reason.message : String(reason);
+    const errorStack = reason instanceof Error ? reason.stack : 'N/A';
+
+    logger.fatal(
+      {
+        reason,
+        message: errorMessage,
+        stack: errorStack,
+      },
+      '💀 CRASH: Unhandled promise rejection'
+    );
+
+    // Try to send Telegram notification before dying
+    if (telegramNotifier.isConfigured()) {
+      telegramNotifier
+        .sendMessage(`💀 BOT CRASHED!\n\nUnhandled Rejection: ${errorMessage}\n\nStack: ${String(errorStack).slice(0, 500)}`)
+        .catch(() => { /* ignore */ })
+        .finally(() => {
+          process.exit(1);
+        });
+      // Give it 3 seconds to send
+      setTimeout(() => process.exit(1), 3000);
+    } else {
+      process.exit(1);
+    }
   });
 }
 
