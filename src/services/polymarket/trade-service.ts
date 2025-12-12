@@ -11,10 +11,14 @@ import type { PolymarketTrade } from '../../types/index.js';
 
 /**
  * Trade service - handles incoming trades and storage
+ * Uses a queue to prevent resource exhaustion from concurrent processing
  */
 class TradeService {
   private static instance: TradeService | null = null;
   private tradeCount = 0;
+  private tradeQueue: PolymarketTrade[] = [];
+  private isProcessing = false;
+  private readonly MAX_QUEUE_SIZE = 1000;
 
   private constructor() {
     // Private constructor for singleton
@@ -31,10 +35,49 @@ class TradeService {
   }
 
   /**
-   * Process an incoming trade
-   * Stores to database and triggers analysis pipeline
+   * Queue a trade for processing
+   * Trades are processed sequentially to prevent resource exhaustion
    */
   public async processTrade(trade: PolymarketTrade): Promise<void> {
+    // Drop trades if queue is full to prevent memory exhaustion
+    if (this.tradeQueue.length >= this.MAX_QUEUE_SIZE) {
+      logger.warn(
+        { queueSize: this.tradeQueue.length },
+        'Trade queue full, dropping trade'
+      );
+      return;
+    }
+
+    this.tradeQueue.push(trade);
+
+    // Start processing if not already running
+    if (!this.isProcessing) {
+      void this.processQueue();
+    }
+  }
+
+  /**
+   * Process trades from the queue sequentially
+   */
+  private async processQueue(): Promise<void> {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+
+    while (this.tradeQueue.length > 0) {
+      const trade = this.tradeQueue.shift();
+      if (trade) {
+        await this.processTradeInternal(trade);
+      }
+    }
+
+    this.isProcessing = false;
+  }
+
+  /**
+   * Internal trade processing logic
+   * Stores to database and triggers analysis pipeline
+   */
+  private async processTradeInternal(trade: PolymarketTrade): Promise<void> {
     try {
       // The trade.marketId from WebSocket is actually the asset_id (CLOB token ID)
       // We need to look up the actual market using this asset ID
@@ -69,8 +112,8 @@ class TradeService {
           size: tradeWithMarketId.size,
           price: tradeWithMarketId.price,
           outcome,
-          maker: tradeWithMarketId.maker.substring(0, 8) + '...',
-          taker: tradeWithMarketId.taker.substring(0, 8) + '...',
+          maker: tradeWithMarketId.maker?.substring(0, 8) + '...' || 'unknown',
+          taker: tradeWithMarketId.taker?.substring(0, 8) + '...' || 'unknown',
         },
         'Processing trade'
       );

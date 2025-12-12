@@ -145,9 +145,34 @@ class WalletForensicsService {
     } catch (error) {
       logger.error(
         { error, address: normalizedAddress },
-        'Failed to analyze wallet fingerprint'
+        'Failed to analyze wallet fingerprint - returning default'
       );
-      throw error;
+
+      // Return a default fingerprint instead of throwing
+      // This ensures signal detection can continue even if wallet analysis fails
+      const defaultFingerprint: WalletFingerprint = {
+        address: normalizedAddress,
+        isSuspicious: false,
+        flags: {
+          cexFunded: false,
+          lowTxCount: false,
+          youngWallet: false,
+          highPolymarketNetflow: false,
+          singlePurpose: false,
+        },
+        metadata: {
+          totalTransactions: 0,
+          walletAgeDays: 0,
+          firstSeenTimestamp: null,
+          cexFundingSource: null,
+          cexFundingTimestamp: null,
+          polymarketNetflowPercentage: 0,
+          uniqueProtocolsInteracted: 0,
+        },
+        analyzedAt: new Date(),
+      };
+
+      return defaultFingerprint;
     }
   }
 
