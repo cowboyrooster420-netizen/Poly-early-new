@@ -23,6 +23,7 @@ interface GammaMarket {
   conditionId: string;
   slug: string;
   volume: string;
+  liquidity: string;
   active: boolean;
   closed: boolean;
   clobTokenIds?: string[];
@@ -304,6 +305,14 @@ class TelegramCommandHandler {
           );
         }
 
+        const openInterest = parseFloat(market.liquidity) || 0;
+        const volume = parseFloat(market.volume) || 0;
+
+        logger.info(
+          { marketId: market.id, openInterest, volume },
+          'Market OI and volume'
+        );
+
         await prisma.market.create({
           data: {
             id: market.id,
@@ -312,8 +321,8 @@ class TelegramCommandHandler {
             conditionId: market.conditionId,
             clobTokenIdYes,
             clobTokenIdNo,
-            openInterest: 0,
-            volume: parseFloat(market.volume) || 0,
+            openInterest,
+            volume,
             active: market.active,
             closed: market.closed,
             enabled: true,

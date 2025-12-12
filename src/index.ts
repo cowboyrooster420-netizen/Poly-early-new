@@ -157,6 +157,28 @@ async function main(): Promise<void> {
     await telegramCommands.start();
   }
 
+  // Set up periodic OI refresh (every 10 minutes)
+  const TEN_MINUTES = 10 * 60 * 1000;
+
+  // Run initial refresh after 30 seconds
+  setTimeout(() => {
+    marketService
+      .refreshOpenInterest()
+      .catch((err) => {
+        logger.error({ error: err }, 'Failed initial OI refresh');
+      });
+  }, 30000);
+
+  // Then refresh every 10 minutes
+  setInterval(() => {
+    marketService
+      .refreshOpenInterest()
+      .catch((err) => {
+        logger.error({ error: err }, 'Failed periodic OI refresh');
+      });
+  }, TEN_MINUTES);
+  logger.info('📊 OI refresh scheduled (every 10 minutes)');
+
   // Graceful shutdown handler
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Received shutdown signal');
