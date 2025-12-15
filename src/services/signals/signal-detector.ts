@@ -48,10 +48,13 @@ class SignalDetector {
         return null;
       }
 
-      // Calculate OI percentage
+      // Calculate USD value (shares * price)
+      const tradeUsdValue = parseFloat(trade.size) * parseFloat(trade.price);
+
+      // Calculate OI percentage using USD values
       const oiPercentage = this.calculateOiPercentage(
-        trade.size,
-        marketData.openInterest
+        tradeUsdValue,
+        parseFloat(marketData.openInterest)
       );
 
       // Get price before/after (simplified - in real impl would track orderbook)
@@ -65,8 +68,10 @@ class SignalDetector {
         logger.debug(
           {
             tradeId: trade.id,
-            oiPercentage,
-            priceImpact,
+            tradeUsdValue: tradeUsdValue.toFixed(2),
+            openInterest: marketData.openInterest,
+            oiPercentage: oiPercentage.toFixed(2),
+            priceImpact: priceImpact.toFixed(2),
             thresholds: {
               minOi: thresholds.minOiPercentage,
               minPrice: thresholds.minPriceImpact,
@@ -76,9 +81,6 @@ class SignalDetector {
         );
         return null;
       }
-
-      // Calculate USD value (size * price for binary prediction markets)
-      const tradeUsdValue = parseFloat(trade.size) * parseFloat(trade.price);
 
       // Build trade signal
       const signal: TradeSignal = {
@@ -100,6 +102,8 @@ class SignalDetector {
         {
           tradeId: trade.id,
           marketId: trade.marketId,
+          tradeUsdValue: tradeUsdValue.toFixed(2),
+          openInterest: marketData.openInterest,
           oiPercentage: oiPercentage.toFixed(2),
           priceImpact: priceImpact.toFixed(2),
         },
@@ -266,16 +270,15 @@ class SignalDetector {
 
   /**
    * Calculate OI percentage
+   * @param tradeUsdValue - Trade value in USD (shares * price)
+   * @param openInterest - Market liquidity in USD
    */
-  private calculateOiPercentage(tradeSize: string, oi: string): number {
-    const size = parseFloat(tradeSize);
-    const openInterest = parseFloat(oi);
-
+  private calculateOiPercentage(tradeUsdValue: number, openInterest: number): number {
     if (openInterest === 0) {
       return 0;
     }
 
-    return (size / openInterest) * 100;
+    return (tradeUsdValue / openInterest) * 100;
   }
 
   /**
