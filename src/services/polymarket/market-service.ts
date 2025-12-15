@@ -1,8 +1,15 @@
+import axios from 'axios';
 import { db } from '../database/prisma.js';
 import { redis } from '../cache/redis.js';
 import { polymarketWs } from './websocket.js';
 import { logger } from '../../utils/logger.js';
 import type { MarketConfig } from '../../types/index.js';
+
+interface GammaMarketResponse {
+  id: string;
+  volume: string;
+  liquidity: string;
+}
 
 /**
  * Market service - manages monitored markets and subscriptions
@@ -347,6 +354,77 @@ class MarketService {
         misc: markets.filter((m) => m.category === 'misc').length,
       },
     };
+  }
+
+  /**
+   * Refresh OI (open interest) for all monitored markets
+   * Fetches latest liquidity from Gamma API and updates database
+   */
+  public async refreshOpenInterest(): Promise<void> {
+    const markets = this.getAllMarkets();
+
+    if (markets.length === 0) {
+      logger.debug('No markets to refresh OI for');
+      return;
+    }
+
+    logger.info({ count: markets.length }, 'Refreshing OI for markets');
+
+    let updated = 0;
+    let failed = 0;
+
+    for (const market of markets) {
+      try {
+        // Fetch market data from Gamma API
+        const response = await axios.get<GammaMarketResponse>(
+          `https://gamma-api.polymarket.com/markets/${market.id}`,
+          {
+            headers: { 'User-Agent': 'PolymarketInsiderBot/1.0' },
+            timeout: 10000,
+          }
+        );
+
+        const newOI = parseFloat(response.data.liquidity) || 0;
+        const newVolume = parseFloat(response.data.volume) || 0;
+
+        // Update database
+        const prisma = db.getClient();
+        await prisma.market.update({
+          where: { id: market.id },
+          data: {
+            openInterest: newOI,
+            volume: newVolume,
+          },
+        });
+
+        // Update in-memory cache
+        market.openInterest = newOI.toString();
+        market.volume = newVolume.toString();
+        this.monitoredMarkets.set(market.id, market);
+
+        // Update Redis cache
+        await redis.setJSON(`market:data:${market.id}`, {
+          openInterest: newOI.toString(),
+          volume: newVolume.toString(),
+        }, 300); // 5 min cache for signal detector
+
+        updated++;
+      } catch (error) {
+        logger.warn(
+          { error, marketId: market.id },
+          'Failed to refresh OI for market'
+        );
+        failed++;
+      }
+
+      // Small delay to avoid rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    logger.info(
+      { updated, failed, total: markets.length },
+      'OI refresh complete'
+    );
   }
 }
 
