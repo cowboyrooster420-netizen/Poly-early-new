@@ -137,6 +137,8 @@ export interface MarketConfig {
   category: 'politics' | 'corporate' | 'sports' | 'misc';
   enabled: boolean;
   notes?: string;
+  openInterest: string;
+  volume: string;
 }
 
 export interface DetectionThresholds {

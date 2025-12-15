@@ -118,6 +118,8 @@ class MarketService {
           category: string | null;
           enabled: boolean;
           notes: string | null;
+          openInterest: { toString(): string };
+          volume: { toString(): string };
         }): MarketConfig => {
           const config: MarketConfig = {
             id: m.id,
@@ -129,6 +131,8 @@ class MarketService {
             tier: m.tier as 1 | 2 | 3,
             category: m.category as 'politics' | 'corporate' | 'sports' | 'misc',
             enabled: m.enabled,
+            openInterest: m.openInterest.toString(),
+            volume: m.volume.toString(),
           };
           if (m.notes !== null) {
             config.notes = m.notes;
