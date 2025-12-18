@@ -188,15 +188,15 @@ class SlackNotifierService {
         fields: [
           {
             type: 'mrkdwn',
-            text: `*OI %:*\n${alert.scoreBreakdown.tradeSize}pts (${alert.walletFingerprint.metadata.polymarketNetflowPercentage.toFixed(1)}%)`,
-          },
-          {
-            type: 'mrkdwn',
-            text: `*Dormancy:*\n${alert.scoreBreakdown.dormancy}pts`,
+            text: `*Trade Size:*\n${alert.scoreBreakdown.tradeSize}pts`,
           },
           {
             type: 'mrkdwn',
             text: `*Wallet:*\n${alert.scoreBreakdown.walletSuspicion}pts`,
+          },
+          {
+            type: 'mrkdwn',
+            text: `*Timing:*\n${alert.scoreBreakdown.timing}pts`,
           },
           {
             type: 'mrkdwn',

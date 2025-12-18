@@ -181,20 +181,6 @@ class TradeService {
         return;
       }
 
-      // Step 2: Check market dormancy
-      const dormancy = await signalDetector.checkDormancy(
-        trade.marketId,
-        trade.timestamp
-      );
-
-      if (!dormancy.isDormant) {
-        logger.debug(
-          { tradeId: trade.id },
-          'Market not dormant, skipping signal'
-        );
-        return;
-      }
-
       logger.info(
         {
           tradeId: trade.id,
@@ -202,12 +188,11 @@ class TradeService {
           wallet: trade.taker.substring(0, 10) + '...',
           oiPercentage: signal.oiPercentage.toFixed(2),
           priceImpact: signal.priceImpact.toFixed(2),
-          dormantHours: dormancy.hoursSinceLastLargeTrade.toFixed(1),
         },
-        '🎯 Potential insider signal detected!'
+        '🎯 Large trade detected - analyzing wallet'
       );
 
-      // Step 3: Analyze wallet fingerprint
+      // Step 2: Analyze wallet fingerprint
       const walletFingerprint = await walletForensicsService.analyzeWallet(
         trade.taker
       );
@@ -225,10 +210,9 @@ class TradeService {
         '🔍 Wallet fingerprint analyzed'
       );
 
-      // Step 4: Calculate confidence score
+      // Step 3: Calculate confidence score
       const alertScore = alertScorer.calculateScore({
         tradeSignal: signal,
-        dormancy,
         walletFingerprint,
       });
 
@@ -243,7 +227,7 @@ class TradeService {
         '📊 Alert score calculated'
       );
 
-      // Step 5: Generate alert if score >= threshold
+      // Step 4: Generate alert if score >= threshold
       if (alertScorer.shouldAlert(alertScore)) {
         await alertPersistence.createAlert({
           tradeId: trade.id,
@@ -256,7 +240,6 @@ class TradeService {
           confidenceScore: alertScore.totalScore,
           classification: alertScore.classification,
           tradeSignal: signal,
-          dormancyMetrics: dormancy,
           walletFingerprint,
           scoreBreakdown: alertScore.breakdown,
         });

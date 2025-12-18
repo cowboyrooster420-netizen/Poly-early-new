@@ -113,7 +113,7 @@ export interface Alert {
   marketSlug: string;
   tradeSignal: TradeSignal;
   walletFingerprint: WalletFingerprint;
-  dormancyMetrics: DormancyMetrics;
+  dormancyMetrics?: DormancyMetrics; // Optional - dormancy no longer used for signal gating
   timingWindows: TimingWindow[];
   confidenceScore: number;
   timestamp: number;
