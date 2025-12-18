@@ -8,8 +8,8 @@ Production-grade automated detection system for identifying potentially informed
 
 ### 🎯 Signal Detection
 - **OI-Relative Analysis**: Detects trades ≥20% of open interest or ≥20% price impact
-- **Dormancy Detection**: Identifies activity in dormant markets (4hr no large trades, 3hr no price moves)
 - **Real-time WebSocket**: Sub-second trade detection with automatic reconnection
+- **No Dormancy Gate**: All large trades are analyzed regardless of recent market activity
 
 ### 🔍 Wallet Forensics
 - **CEX Funding Detection**: Tracks wallets funded from 20+ known exchange addresses (14-day window)
@@ -20,10 +20,9 @@ Production-grade automated detection system for identifying potentially informed
 
 ### 📊 Alert Scoring
 - **0-100 Confidence Score** combining:
-  - Trade Size (0-25pts): OI% + price impact
-  - Dormancy (0-25pts): Hours since last activity
-  - Wallet Suspicion (0-35pts): CEX funded, low tx, young wallet, high netflow, single-purpose
-  - Timing (0-15pts): Reserved for future leak-window detection
+  - Trade Size (0-40pts): OI% + price impact
+  - Wallet Suspicion (0-50pts): CEX funded, low tx, young wallet, high netflow, single-purpose
+  - Timing (0-10pts): Reserved for future leak-window detection
 - **Classification**: Low/Medium/High/Critical
 - **Alert Threshold**: Score ≥ 70 triggers notifications
 
@@ -58,7 +57,7 @@ Production-grade automated detection system for identifying potentially informed
                    ┌─────────────────┐
                    │Signal Detector  │
                    │ - OI Analysis   │
-                   │ - Dormancy      │
+                   │ - Price Impact  │
                    └────────┬────────┘
                             │
                             ▼
@@ -140,10 +139,6 @@ SENTRY_DSN=https://your-sentry-dsn
 # Detection Thresholds (optional - defaults provided)
 MIN_OI_PERCENTAGE=20
 MIN_PRICE_IMPACT=20
-DORMANT_HOURS_NO_LARGE_TRADES=4
-DORMANT_HOURS_NO_PRICE_MOVES=3
-DORMANT_LARGE_TRADE_THRESHOLD=2000
-DORMANT_PRICE_MOVE_THRESHOLD=8
 MAX_WALLET_TRANSACTIONS=40
 MIN_NETFLOW_PERCENTAGE=85
 CEX_FUNDING_WINDOW_DAYS=14
@@ -273,8 +268,6 @@ Customize via environment variables or `src/config/thresholds.ts`:
 |-----------|---------|-------------|
 | `MIN_OI_PERCENTAGE` | 20 | Minimum % of open interest for signal |
 | `MIN_PRICE_IMPACT` | 20 | Minimum % price impact for signal |
-| `DORMANT_HOURS_NO_LARGE_TRADES` | 4 | Hours without $2k+ trades |
-| `DORMANT_HOURS_NO_PRICE_MOVES` | 3 | Hours without ≥8% price moves |
 | `MAX_WALLET_TRANSACTIONS` | 40 | Max txs for "low activity" flag |
 | `MIN_NETFLOW_PERCENTAGE` | 85 | Min % netflow to Polymarket |
 | `CEX_FUNDING_WINDOW_DAYS` | 14 | Days to check for CEX funding |
@@ -356,7 +349,7 @@ docker-compose logs bot | grep 'walletForensics'
 
 ### Key Log Events
 
-- `🎯 Potential insider signal detected` - Initial signal (OI + dormancy)
+- `🎯 Large trade detected - analyzing wallet` - Trade meets OI/impact threshold
 - `🔍 Wallet fingerprint analyzed` - Wallet forensics complete
 - `📊 Alert score calculated` - Scoring complete
 - `🚨 HIGH CONFIDENCE INSIDER SIGNAL` - Alert created (score ≥ 70)
@@ -404,15 +397,15 @@ const stats = await alertPersistence.getAlertStats();
 ### No Alerts Generated
 
 **Possible Causes:**
-1. **Markets too active:** No markets meeting dormancy thresholds (4hr/3hr)
-2. **No large trades:** No trades meeting OI/impact thresholds (20%/20%)
+1. **No large trades:** No trades meeting OI/impact thresholds (20%/20%)
+2. **Normal wallets:** Trades from wallets that don't show suspicious patterns
 3. **Thresholds too strict:** Consider lowering detection thresholds
-4. **Market selection:** Not monitoring high-liquidity markets
+4. **Market selection:** Not monitoring markets with enough activity
 
 **Diagnostics:**
 ```bash
 # Check if trades are being processed
-docker-compose logs bot | grep "Trade processed"
+docker-compose logs bot | grep "Processing trade"
 
 # Check signal detection
 docker-compose logs bot | grep "Large trade detected"
@@ -445,7 +438,7 @@ src/
 │   ├── database/    # Prisma service
 │   ├── notifications/ # Slack, Telegram
 │   ├── polymarket/  # WebSocket, markets, trades
-│   └── signals/     # Signal detection (OI, dormancy)
+│   └── signals/     # Signal detection (OI, price impact)
 ├── types/           # TypeScript type definitions
 ├── utils/           # Logger, helpers
 └── index.ts         # Application entry point

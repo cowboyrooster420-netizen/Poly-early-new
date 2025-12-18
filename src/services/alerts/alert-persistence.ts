@@ -2,7 +2,7 @@ import { db, type PrismaClient } from '../database/prisma.js';
 import { notificationCoordinator } from '../notifications/notification-coordinator.js';
 import { logger } from '../../utils/logger.js';
 import type { AlertScore } from './alert-scorer.js';
-import type { TradeSignal, DormancyMetrics } from '../../types/index.js';
+import type { TradeSignal } from '../../types/index.js';
 import type { WalletFingerprint } from '../blockchain/wallet-forensics.js';
 
 /**
@@ -19,7 +19,6 @@ export interface AlertData {
   confidenceScore: number;
   classification: 'low' | 'medium' | 'high' | 'critical';
   tradeSignal: TradeSignal;
-  dormancyMetrics: DormancyMetrics;
   walletFingerprint: WalletFingerprint;
   scoreBreakdown: AlertScore['breakdown'];
 }
@@ -69,20 +68,12 @@ class AlertPersistenceService {
             priceImpact: data.tradeSignal.priceImpact,
             tradeUsdValue: data.tradeSignal.tradeUsdValue,
 
-            // Dormancy metrics
-            isDormant: data.dormancyMetrics.isDormant,
-            hoursSinceLastLargeTrade:
-              data.dormancyMetrics.hoursSinceLastLargeTrade,
-            hoursSinceLastPriceMove:
-              data.dormancyMetrics.hoursSinceLastPriceMove,
-            lastLargeTradeTimestamp:
-              data.dormancyMetrics.lastLargeTradeTimestamp !== null
-                ? new Date(data.dormancyMetrics.lastLargeTradeTimestamp)
-                : null,
-            lastPriceMoveTimestamp:
-              data.dormancyMetrics.lastPriceMoveTimestamp !== null
-                ? new Date(data.dormancyMetrics.lastPriceMoveTimestamp)
-                : null,
+            // Dormancy metrics (no longer used for gating, set to defaults)
+            isDormant: false,
+            hoursSinceLastLargeTrade: 0,
+            hoursSinceLastPriceMove: 0,
+            lastLargeTradeTimestamp: null,
+            lastPriceMoveTimestamp: null,
 
             // Wallet flags
             walletIsSuspicious: data.walletFingerprint.isSuspicious,
@@ -104,7 +95,7 @@ class AlertPersistenceService {
 
             // Score breakdown
             scoreTradeSize: data.scoreBreakdown.tradeSize,
-            scoreDormancy: data.scoreBreakdown.dormancy,
+            scoreDormancy: 0, // Dormancy no longer used in scoring
             scoreWalletSuspicion: data.scoreBreakdown.walletSuspicion,
             scoreTiming: data.scoreBreakdown.timing,
 
