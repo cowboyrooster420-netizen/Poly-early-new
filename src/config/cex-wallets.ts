@@ -14,7 +14,7 @@
 
 export interface CexWalletAddress {
   address: string;
-  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin';
+  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'bybit';
   label: string;
   verified: boolean;
   notes?: string;
@@ -267,6 +267,56 @@ const KUCOIN_WALLETS: CexWalletAddress[] = [
 ];
 
 /**
+ * Bybit hot wallets on Polygon
+ */
+const BYBIT_WALLETS: CexWalletAddress[] = [
+  { address: '0x1db92e2eebc8e0c075a02bea49a2935bcd2dfcf4', exchange: 'bybit', label: 'Bybit 1', verified: true },
+  { address: '0xa7a93fd0a276fc1c0197a5b5623ed117786eed06', exchange: 'bybit', label: 'Bybit 2', verified: true },
+  { address: '0xe1ab8c08294f8ee707d4efa458eab8bbeeb09215', exchange: 'bybit', label: 'Bybit 3', verified: true },
+  { address: '0xee5b5b923ffce93a870b3104b7ca09c3db80047a', exchange: 'bybit', label: 'Bybit 4', verified: true },
+  { address: '0xf89d7b9c864f589bbf53a82105107622b35eaa40', exchange: 'bybit', label: 'Bybit 5', verified: true },
+  { address: '0xbaed383ede0e5d9d72430661f3285daa77e9439f', exchange: 'bybit', label: 'Bybit 6', verified: true },
+  { address: '0xf5f3436a05b5ced2490dae07b86eb5bbd02782aa', exchange: 'bybit', label: 'Bybit 7', verified: true },
+  { address: '0x4230c402c08cb66dcf3820649a115e54661fce9d', exchange: 'bybit', label: 'Bybit 8', verified: true },
+  { address: '0x3d5202a0564de9b05ecd07c955bcca964585ea03', exchange: 'bybit', label: 'Bybit 9', verified: true },
+  { address: '0x1e32760a3285550278aeafa776e5641bc581c845', exchange: 'bybit', label: 'Bybit 10', verified: true },
+  { address: '0x88a1493366d48225fc3cefbdae9ebb23e323ade3', exchange: 'bybit', label: 'Bybit 11', verified: true },
+  { address: '0x12136e543b551ecdfdea9a0ed23ed0eff5505ee0', exchange: 'bybit', label: 'Bybit 12', verified: true },
+  { address: '0x4ce053dfe58541e08f149c1050eb3df09d7a40bc', exchange: 'bybit', label: 'Bybit 13', verified: true },
+  { address: '0xd8db73f025adf9f1f6a754a4b0b7a9349b7ff128', exchange: 'bybit', label: 'Bybit 14', verified: true },
+  { address: '0x57b83aaff113ef81a729b63274ed6f17404c9ba6', exchange: 'bybit', label: 'Bybit 15', verified: true },
+  { address: '0x3ddb5d1247adc837cec3ba81edc923a4a230aa8f', exchange: 'bybit', label: 'Bybit 16', verified: true },
+  { address: '0x0d4dc3b8becc98782309e443a6da4b9455b5ca48', exchange: 'bybit', label: 'Bybit 17', verified: true },
+  { address: '0x1c3944173abee256456b1498299fc501ad5bbd6f', exchange: 'bybit', label: 'Bybit 18', verified: true },
+  { address: '0xa6a9f45518881a788e29f82a032f9d400177d2b6', exchange: 'bybit', label: 'Bybit 19', verified: true },
+  { address: '0xb5873e333161e5b45adac57379ec2b15d861178d', exchange: 'bybit', label: 'Bybit 20', verified: true },
+  { address: '0x0051ef9259c7ec0644a80e866ab748a2f30841b3', exchange: 'bybit', label: 'Bybit 21', verified: true },
+  { address: '0x828424517f9f04015db02169f4026d57b2b07229', exchange: 'bybit', label: 'Bybit 22', verified: true },
+  { address: '0x869bcee3a0bad2211a65c63ec47dbd3d85a84d68', exchange: 'bybit', label: 'Bybit 23', verified: true },
+  { address: '0x318d2aae4c99c2e74f7b5949fa1c34df837789b8', exchange: 'bybit', label: 'Bybit 24', verified: true },
+  { address: '0x18e296053cbdf986196903e889b7dca7a73882f6', exchange: 'bybit', label: 'Bybit 25', verified: true },
+  { address: '0x3bd0e57e2917d3d9a93f479b3a23b28c3f31a789', exchange: 'bybit', label: 'Bybit 26', verified: true },
+  { address: '0x4865d4bcf4ab92e1c9ba5011560e7d4c36f54106', exchange: 'bybit', label: 'Bybit 27', verified: true },
+  { address: '0xa1abfa21f80ecf401bd41365adbb6fef6fefdf09', exchange: 'bybit', label: 'Bybit 28', verified: true },
+  { address: '0x72187db55473b693ded367983212fe2db3768829', exchange: 'bybit', label: 'Bybit 29', verified: true },
+  { address: '0xcab3f132a11e5b723fc20ddab8bb1b858d00a8e8', exchange: 'bybit', label: 'Bybit 30', verified: true },
+  { address: '0xec949f12a3acab835f3eed8b54b7361a8fbb3ee0', exchange: 'bybit', label: 'Bybit 31', verified: true },
+  { address: '0x25c7d768a7d53e6ebe5590c621437126c766e1ea', exchange: 'bybit', label: 'Bybit 32', verified: true },
+  { address: '0xc22166664e820cda6bf4cedbdbb4fa1e6a84c440', exchange: 'bybit', label: 'Bybit 33', verified: true },
+  { address: '0xf2f40c3bb444288f6f64d8336dcc14dbd929fd94', exchange: 'bybit', label: 'Bybit 34', verified: true },
+  { address: '0x63bee4a7e4aa5d76dc6ab9b9d1852aabb9a40936', exchange: 'bybit', label: 'Bybit 35', verified: true },
+  { address: '0x6b9b774502e6afaafcac84f840ac8a0844a1abe3', exchange: 'bybit', label: 'Bybit 36', verified: true },
+  { address: '0x80a9b4aab0ad3c73cce1c9223236b722db5d6628', exchange: 'bybit', label: 'Bybit 37', verified: true },
+  { address: '0xdae4fdcb7fc93738ec6d5b1ea92b7c7f75e4f2f6', exchange: 'bybit', label: 'Bybit 38', verified: true },
+  { address: '0xbce9aecd3985d4cbb9d273453159a26301fa02ef', exchange: 'bybit', label: 'Bybit 39', verified: true },
+  { address: '0x260b364fe0d3d37e6fd3cda0fa50926a06c54cea', exchange: 'bybit', label: 'Bybit 40', verified: true },
+  { address: '0x2ffcb90d6455b99ec14b4842f82b504dae80736b', exchange: 'bybit', label: 'Bybit 41', verified: true },
+  { address: '0xc3350595ed42ebe94556277bc77d257c76065291', exchange: 'bybit', label: 'Bybit 42', verified: true },
+  { address: '0x79ae8c1b31b1e61c4b9d1040217a051f954d4433', exchange: 'bybit', label: 'Bybit 43', verified: true },
+  { address: '0x3fb00e38602c6a501e19eda24787f40bccef0432', exchange: 'bybit', label: 'Bybit 44', verified: true },
+];
+
+/**
  * All CEX wallets combined
  */
 export const ALL_CEX_WALLETS: CexWalletAddress[] = [
@@ -276,6 +326,7 @@ export const ALL_CEX_WALLETS: CexWalletAddress[] = [
   ...GEMINI_WALLETS,
   ...OKX_WALLETS,
   ...KUCOIN_WALLETS,
+  ...BYBIT_WALLETS,
 ];
 
 /**
