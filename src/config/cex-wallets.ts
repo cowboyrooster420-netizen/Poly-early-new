@@ -14,6 +14,7 @@
 
 export interface CexWalletAddress {
   address: string;
+  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'mexc' | 'coinw' | 'delta' | 'gate';
   exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'bybit';
   label: string;
   verified: boolean;
@@ -1368,18 +1369,126 @@ const OKX_WALLETS: CexWalletAddress[] = [
  * KuCoin hot wallets on Polygon
  */
 const KUCOIN_WALLETS: CexWalletAddress[] = [
-  {
-    address: '0x689C56AEf474Df92D44A1B70850f808488F9769C',
-    exchange: 'kucoin',
-    label: 'KuCoin 1',
-    verified: true,
-  },
-  {
-    address: '0x2B5634C42055806a59e9107ED44D43c426E58258',
-    exchange: 'kucoin',
-    label: 'KuCoin 2',
-    verified: true,
-  },
+  { address: '0x2b5634c42055806a59e9107ed44d43c426e58258', exchange: 'kucoin', label: 'KuCoin 1', verified: true },
+  { address: '0x689c56aef474df92d44a1b70850f808488f9769c', exchange: 'kucoin', label: 'KuCoin 2', verified: true },
+  { address: '0xa1d8d972560c2f8144af871db508f0b0b10a3fbf', exchange: 'kucoin', label: 'KuCoin 3', verified: true },
+  { address: '0x4ad64983349c49defe8d7a4686202d24b25d0ce8', exchange: 'kucoin', label: 'KuCoin 4', verified: true },
+  { address: '0x1692e170361cefd1eb7240ec13d048fd9af6d667', exchange: 'kucoin', label: 'KuCoin 5', verified: true },
+  { address: '0xd6216fc19db775df9774a6e33526131da7d19a2c', exchange: 'kucoin', label: 'KuCoin 6', verified: true },
+  { address: '0xe59cd29be3be4461d79c0881d238cbe87d64595a', exchange: 'kucoin', label: 'KuCoin 7', verified: true },
+  { address: '0x899b5d52671830f567bf43a14684eb14e1f945fe', exchange: 'kucoin', label: 'KuCoin 8', verified: true },
+  { address: '0xf16e9b0d03470827a95cdfd0cb8a8a3b46969b91', exchange: 'kucoin', label: 'KuCoin 9', verified: true },
+  { address: '0xcad621da75a66c7a8f4ff86d30a2bf981bfc8fdd', exchange: 'kucoin', label: 'KuCoin 10', verified: true },
+  { address: '0xec30d02f10353f8efc9601371f56e808751f396f', exchange: 'kucoin', label: 'KuCoin 11', verified: true },
+  { address: '0x738cf6903e6c4e699d1c2dd9ab8b67fcdb3121ea', exchange: 'kucoin', label: 'KuCoin 12', verified: true },
+  { address: '0xd89350284c7732163765b23338f2ff27449e0bf5', exchange: 'kucoin', label: 'KuCoin 13', verified: true },
+  { address: '0x88bd4d3e2997371bceefe8d9386c6b5b4de60346', exchange: 'kucoin', label: 'KuCoin 14', verified: true },
+  { address: '0xb8e6d31e7b212b2b7250ee9c26c56cebbfbe6b23', exchange: 'kucoin', label: 'KuCoin 15', verified: true },
+  { address: '0xe66845fd840fc7e489bcb61241fff5b7fc5f1f0e', exchange: 'kucoin', label: 'KuCoin 16', verified: true },
+  { address: '0x03e6fa590cadcf15a38e86158e9b3d06ff3399ba', exchange: 'kucoin', label: 'KuCoin 17', verified: true },
+  { address: '0xf3f094484ec6901ffc9681bcb808b96bafd0b8a8', exchange: 'kucoin', label: 'KuCoin 18', verified: true },
+  { address: '0xa3f45e619ce3aae2fa5f8244439a66b203b78bcc', exchange: 'kucoin', label: 'KuCoin 19', verified: true },
+  { address: '0xebb8ea128bbdff9a1780a4902a9380022371d466', exchange: 'kucoin', label: 'KuCoin 20', verified: true },
+  { address: '0x45300136662dd4e58fc0df61e6290dffd992b785', exchange: 'kucoin', label: 'KuCoin 21', verified: true },
+  { address: '0x635308e731a878741bfec299e67f5fd28c7553d9', exchange: 'kucoin', label: 'KuCoin 22', verified: true },
+  { address: '0x9ac5637d295fea4f51e086c329d791cc157b1c84', exchange: 'kucoin', label: 'KuCoin 23', verified: true },
+  { address: '0xcd5f3c15120a1021155174719ec5fcf2c75adf5b', exchange: 'kucoin', label: 'KuCoin 24', verified: true },
+  { address: '0xb9f79fc4b7a2f5fb33493ab5d018db811c9c2f02', exchange: 'kucoin', label: 'KuCoin 25', verified: true },
+  { address: '0xd91efec7e42f80156d1d9f660a69847188950747', exchange: 'kucoin', label: 'KuCoin 26', verified: true },
+  { address: '0x4e75e27e5aa74f0c7a9d4897dc10ef651f3a3995', exchange: 'kucoin', label: 'KuCoin 27', verified: true },
+  { address: '0x14ea40648fc8c1781d19363f5b9cc9a877ac2469', exchange: 'kucoin', label: 'KuCoin 28', verified: true },
+  { address: '0x17a30350771d02409046a683b18fe1c13ccfc4a8', exchange: 'kucoin', label: 'KuCoin 29', verified: true },
+  { address: '0x2a8c8b09bd77c13980495a959b26c1305166a57f', exchange: 'kucoin', label: 'KuCoin 30', verified: true },
+  { address: '0x53f78a071d04224b8e254e243fffc6d9f2f3fa23', exchange: 'kucoin', label: 'KuCoin 31', verified: true },
+  { address: '0x58edf78281334335effa23101bbe3371b6a36a51', exchange: 'kucoin', label: 'KuCoin 32', verified: true },
+  { address: '0x7491f26a0fcb459111b3a1db2fbfc4035d096933', exchange: 'kucoin', label: 'KuCoin 33', verified: true },
+  { address: '0x77f59b595cac829575e262b4c8bbcb17abadb33a', exchange: 'kucoin', label: 'KuCoin 34', verified: true },
+  { address: '0x7b915c27a0ed48e2ce726ee40f20b2bf8a88a1b3', exchange: 'kucoin', label: 'KuCoin 35', verified: true },
+  { address: '0x83c41363cbee0081dab75cb841fa24f3db46627e', exchange: 'kucoin', label: 'KuCoin 36', verified: true },
+  { address: '0x9f4cf329f4cf376b7aded854d6054859dd102a2a', exchange: 'kucoin', label: 'KuCoin 37', verified: true },
+  { address: '0xa152f8bb749c55e9943a3a0a3111d18ee2b3f94e', exchange: 'kucoin', label: 'KuCoin 38', verified: true },
+  { address: '0x3ad7d43702bc2177cc9ec655b6ee724136891ef4', exchange: 'kucoin', label: 'KuCoin 39', verified: true },
+  { address: '0xa649ffc455ac7c5acc1bc35726fce54e25eb59f9', exchange: 'kucoin', label: 'KuCoin 40', verified: true },
+  { address: '0xaa99fc695eb1bbfb359fbad718c7c6dafc03a839', exchange: 'kucoin', label: 'KuCoin 41', verified: true },
+  { address: '0x1dd9319a115d36bd0f71c276844f67171678e17b', exchange: 'kucoin', label: 'KuCoin 42', verified: true },
+  { address: '0xf8ba3ec49212ca45325a2335a8ab1279770df6c0', exchange: 'kucoin', label: 'KuCoin 43', verified: true },
+  { address: '0xf8da05c625a6e601281110cba52b156e714e1dc2', exchange: 'kucoin', label: 'KuCoin 44', verified: true },
+  { address: '0xf97deb1c0bb4536ff16617d29e5f4b340fe231df', exchange: 'kucoin', label: 'KuCoin 45', verified: true },
+  { address: '0xfb6a733bf7ec9ce047c1c5199f18401052eb062d', exchange: 'kucoin', label: 'KuCoin 46', verified: true },
+  { address: '0x41e29c02713929f800419abe5770faa8a5b4dadc', exchange: 'kucoin', label: 'KuCoin 47', verified: true },
+  { address: '0x441454b3d857fe365b7defe8cb3e4f498ec91eac', exchange: 'kucoin', label: 'KuCoin 48', verified: true },
+  { address: '0x446b86a33e2a438f569b15855189e3da28d027ba', exchange: 'kucoin', label: 'KuCoin 49', verified: true },
+  { address: '0xce0b6bfd578a5e90fb827ce6f86aa06355277f8c', exchange: 'kucoin', label: 'KuCoin 50', verified: true },
+  { address: '0x4cf8800ccc0a56396f77b1e7c46160f5df0e09a5', exchange: 'kucoin', label: 'KuCoin 51', verified: true },
+  { address: '0x18b0f4547a89fe4c5fe84f258bea3601fa281e9f', exchange: 'kucoin', label: 'KuCoin 52', verified: true },
+  { address: '0x33a28d7a0c94599edb670fcce5dfa9d4c072314e', exchange: 'kucoin', label: 'KuCoin 53', verified: true },
+  { address: '0x2d964ee844c35a72c6a9d498d54c8a9910cf6914', exchange: 'kucoin', label: 'KuCoin 54', verified: true },
+  { address: '0xe58c8d45477d894bb9a1501bb0d0a32af8419eda', exchange: 'kucoin', label: 'KuCoin 55', verified: true },
+  { address: '0xcded3bb9d2dc98f6e4e772095b48051acfb84df9', exchange: 'kucoin', label: 'KuCoin 56', verified: true },
+  { address: '0x22dc53fc2ed383e4bf849b1054f1b86c127fde3e', exchange: 'kucoin', label: 'KuCoin 57', verified: true },
+  { address: '0xf9ed457b149ad27fe2ad2eb734482a425fd6faae', exchange: 'kucoin', label: 'KuCoin 58', verified: true },
+  { address: '0x58a1c909c5ec6cbf9c1df9ab3e9e2301ff707b6b', exchange: 'kucoin', label: 'KuCoin 59', verified: true },
+  { address: '0x2933782b5a8d72f2754103d1489614f29bfa4625', exchange: 'kucoin', label: 'KuCoin 60', verified: true },
+  { address: '0xdd276dc5223d0120f9bf1776f38957cc8da23cb0', exchange: 'kucoin', label: 'KuCoin 61', verified: true },
+  { address: '0xe8c15aad9d4cd3f59c9dfa18828b91a8b2c49596', exchange: 'kucoin', label: 'KuCoin 62', verified: true },
+  { address: '0xb514c67824443868d3a70352398f524ef6af6207', exchange: 'kucoin', label: 'KuCoin 63', verified: true },
+  { address: '0x189b24f3eb15dc71b4fc57c5914e7e9b3246e449', exchange: 'kucoin', label: 'KuCoin 64', verified: true },
+];
+
+/**
+ * MEXC hot wallets on Polygon
+ */
+const MEXC_WALLETS: CexWalletAddress[] = [
+  { address: '0x75e89d5979e4f6fba9f97c104c2f0afb3f1dcb88', exchange: 'mexc', label: 'MEXC 1', verified: true },
+  { address: '0x0211f3cedbef3143223d3acf0e589747933e8527', exchange: 'mexc', label: 'MEXC 2', verified: true },
+  { address: '0x3cc936b795a188f0e246cbb2d74c5bd190aecf18', exchange: 'mexc', label: 'MEXC 3', verified: true },
+  { address: '0x4982085c9e2f89f2ecb8131eca71afad896e89cb', exchange: 'mexc', label: 'MEXC 4', verified: true },
+  { address: '0x2e8f79ad740de90dc5f5a9f0d8d9661a60725e64', exchange: 'mexc', label: 'MEXC 5', verified: true },
+  { address: '0x83c1c224044ef8573e9a728dbb91013cf80827e6', exchange: 'mexc', label: 'MEXC 6', verified: true },
+  { address: '0xdf90c9b995a3b10a5b8570a47101e6c6a29eb945', exchange: 'mexc', label: 'MEXC 7', verified: true },
+  { address: '0x51e3d44172868acc60d68ca99591ce4230bc75e0', exchange: 'mexc', label: 'MEXC 8', verified: true },
+  { address: '0xffb3118124cdaebd9095fa9a479895042018cac2', exchange: 'mexc', label: 'MEXC 9', verified: true },
+  { address: '0x9b64203878f24eb0cdf55c8c6fa7d08ba0cf77e5', exchange: 'mexc', label: 'MEXC 10', verified: true },
+  { address: '0x576b81f0c21edbc920ad63feeeb2b0736b018a58', exchange: 'mexc', label: 'MEXC 11', verified: true },
+  { address: '0x8e1701cfd85258ddb8dfe89bc4c7350822b9601d', exchange: 'mexc', label: 'MEXC 12', verified: true },
+  { address: '0x0162cd2ba40e23378bf0fd41f919e1be075f025f', exchange: 'mexc', label: 'MEXC 13', verified: true },
+  { address: '0x4e3ae00e8323558fa5cac04b152238924aa31b60', exchange: 'mexc', label: 'MEXC 14', verified: true },
+  { address: '0x9bb6a22da110c6c9bab745bcaf0ee142ee83af37', exchange: 'mexc', label: 'MEXC 15', verified: true },
+  { address: '0xb86f1061e0d79e8319339d5fdbb187d4e7ad3300', exchange: 'mexc', label: 'MEXC 16', verified: true },
+  { address: '0x4b68038e910941b7438e70a3943dcc4fd543715c', exchange: 'mexc', label: 'MEXC 17', verified: true },
+  { address: '0x680178d61d910736153991660c5710841c440ec7', exchange: 'mexc', label: 'MEXC 18', verified: true },
+  { address: '0x016c685d3379a515c64e7d85de8c0be11127f1d5', exchange: 'mexc', label: 'MEXC 19', verified: true },
+  { address: '0x5c30940a4544ca845272fe97c4a27f2ed2cd7b64', exchange: 'mexc', label: 'MEXC 20', verified: true },
+  { address: '0x9642b23ed1e01df1092b92641051881a322f5d4e', exchange: 'mexc', label: 'MEXC 21', verified: true },
+];
+
+/**
+ * CoinW hot wallets on Polygon
+ */
+const COINW_WALLETS: CexWalletAddress[] = [
+  { address: '0xab59487c43211da1d8b8e60479cad6aadc52cd1c', exchange: 'coinw', label: 'CoinW Gas Supplier 9', verified: true },
+];
+
+/**
+ * Delta Exchange hot wallets on Polygon
+ */
+const DELTA_WALLETS: CexWalletAddress[] = [
+  { address: '0xc07b9ddc7f87e76e682a7a4f3859586eef1c7efd', exchange: 'delta', label: 'Delta Exchange 1', verified: true },
+  { address: '0x50a3f3b8855c2da88e56c7b0ef6e0e4a79f853f9', exchange: 'delta', label: 'Delta Exchange Binance Deposit 1', verified: true },
+  { address: '0x1a7574d48c4960278e89b7e7e069e5b9809d7b67', exchange: 'delta', label: 'Delta Exchange Gas Supplier 1', verified: true },
+];
+
+/**
+ * Gate.io hot wallets on Polygon
+ */
+const GATE_WALLETS: CexWalletAddress[] = [
+  { address: '0x0d0707963952f2fba59dd06f2b425ace40b492fe', exchange: 'gate', label: 'Gate.io 1', verified: true },
+  { address: '0x7793cd85c11a924478d358d49b05b37e91b5810f', exchange: 'gate', label: 'Gate.io 2', verified: true },
+  { address: '0x1c4b70a3968436b9a0a9cf5205c787eb81bb558c', exchange: 'gate', label: 'Gate.io 3', verified: true },
+  { address: '0x234ee9e35f8e9749a002fc42970d570db716453b', exchange: 'gate', label: 'Gate.io 4', verified: true },
+  { address: '0xc882b111a75c0c657fc507c04fbfcd2cc984f071', exchange: 'gate', label: 'Gate.io 5', verified: true },
+  { address: '0x05ee546c1a62f90d7acbffd6d846c9c54c7cf94c', exchange: 'gate', label: 'Gate.io 6', verified: true },
+  { address: '0xb7715cb185990a1d7fede7bb5a3c369296018279', exchange: 'gate', label: 'Gate.io 10', verified: true },
 ];
 
 /**
@@ -1442,6 +1551,10 @@ export const ALL_CEX_WALLETS: CexWalletAddress[] = [
   ...GEMINI_WALLETS,
   ...OKX_WALLETS,
   ...KUCOIN_WALLETS,
+  ...MEXC_WALLETS,
+  ...COINW_WALLETS,
+  ...DELTA_WALLETS,
+  ...GATE_WALLETS,
   ...BYBIT_WALLETS,
 ];
 
