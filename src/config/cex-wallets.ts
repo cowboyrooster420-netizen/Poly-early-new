@@ -54,6 +54,12 @@ const COINBASE_WALLETS: CexWalletAddress[] = [
     label: 'Coinbase 5',
     verified: true,
   },
+  {
+    address: '0x9810762578aCCF1F314320CCa5B72506aE7D7630',
+    exchange: 'coinbase',
+    label: 'Coinbase 6',
+    verified: true,
+  },
 ];
 
 /**
