@@ -14,7 +14,7 @@
 
 export interface CexWalletAddress {
   address: string;
-  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'bybit' | 'crypto.com' | 'mexc' | 'coinw' | 'delta' | 'gate' | 'moonpay' | 'revolut' | 'blofin';
+  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'bybit' | 'crypto.com' | 'mexc' | 'coinw' | 'delta' | 'gate' | 'moonpay' | 'revolut' | 'blofin' | 'robinhood';
   label: string;
   verified: boolean;
   notes?: string;
@@ -94,6 +94,54 @@ const COINBASE_WALLETS: CexWalletAddress[] = [
     address: '0x14AF92363379f3548958f9de1fb2e6E5DF74476e',
     exchange: 'coinbase',
     label: 'Coinbase 12',
+    verified: true,
+  },
+  {
+    address: '0xC070A61D043189D99bbf4baA58226bf0991c7b11',
+    exchange: 'coinbase',
+    label: 'Coinbase 13',
+    verified: true,
+  },
+  {
+    address: '0x19aB546E77d0cD3245B2AAD46bd80dc4707d6307',
+    exchange: 'coinbase',
+    label: 'Coinbase 14',
+    verified: true,
+  },
+  {
+    address: '0xCb39C5B0dB9C5b6Bd1D9273dcCC2f98f532A8Bc6',
+    exchange: 'coinbase',
+    label: 'Coinbase 15',
+    verified: true,
+  },
+  {
+    address: '0x6321F9F02D9d56261c8C79131aE74D7b427ccAF5',
+    exchange: 'coinbase',
+    label: 'Coinbase 16',
+    verified: true,
+  },
+  {
+    address: '0xb0fa34C866e1e1E7030820B4f846BB58d6F75b04',
+    exchange: 'coinbase',
+    label: 'Coinbase 17',
+    verified: true,
+  },
+  {
+    address: '0xe3aaC971590635F601Ea751096f11343C70ebaDF',
+    exchange: 'coinbase',
+    label: 'Coinbase 18',
+    verified: true,
+  },
+  {
+    address: '0xE7Ee701BdAA5b446C985BFeCC8933f3E5eeed867',
+    exchange: 'coinbase',
+    label: 'Coinbase 19',
+    verified: true,
+  },
+  {
+    address: '0x3eB9845B9C8f835ad130456f8dab6Aef79aF5272',
+    exchange: 'coinbase',
+    label: 'Coinbase 20',
     verified: true,
   },
 ];
@@ -1362,6 +1410,12 @@ const KRAKEN_WALLETS: CexWalletAddress[] = [
     label: 'Kraken Withdrawals 1',
     verified: true,
   },
+  {
+    address: '0x4B6f17856215eab57c29ebfA18B0a0F74A3627bb',
+    exchange: 'kraken',
+    label: 'Kraken 205',
+    verified: true,
+  },
 ];
 
 /**
@@ -1414,6 +1468,24 @@ const OKX_WALLETS: CexWalletAddress[] = [
     address: '0x343d752bB710c5575E417edB3F9FA06241A4749A',
     exchange: 'okx',
     label: 'OKX 5',
+    verified: true,
+  },
+  {
+    address: '0x3aca1b103Fe6dC6d11edA343B3ff25a6450eEbeB',
+    exchange: 'okx',
+    label: 'OKX 6',
+    verified: true,
+  },
+  {
+    address: '0xC74e4C556A16390165C99B40aaBc39A87c358305',
+    exchange: 'okx',
+    label: 'OKX 7',
+    verified: true,
+  },
+  {
+    address: '0x1c62a58a11D88d71F936e0Ee799EaEBd74546894',
+    exchange: 'okx',
+    label: 'OKX 8',
     verified: true,
   },
 ];
@@ -1486,6 +1558,7 @@ const KUCOIN_WALLETS: CexWalletAddress[] = [
   { address: '0xe8c15aad9d4cd3f59c9dfa18828b91a8b2c49596', exchange: 'kucoin', label: 'KuCoin 62', verified: true },
   { address: '0xb514c67824443868d3a70352398f524ef6af6207', exchange: 'kucoin', label: 'KuCoin 63', verified: true },
   { address: '0x189b24f3eb15dc71b4fc57c5914e7e9b3246e449', exchange: 'kucoin', label: 'KuCoin 64', verified: true },
+  { address: '0xcB014880de8b1E5f6c90CBcD2c232970cF3Aec32', exchange: 'kucoin', label: 'KuCoin 65', verified: true },
 ];
 
 /**
@@ -1599,6 +1672,7 @@ const BYBIT_WALLETS: CexWalletAddress[] = [
  */
 const CRYPTO_COM_WALLETS: CexWalletAddress[] = [
   { address: '0xfa0b641678F5115ad8a8De5752016bD1359681b9', exchange: 'crypto.com', label: 'Crypto.com 1', verified: true },
+  { address: '0xAe45a8240147E6179ec7c9f92c5A18F9a97B3fCA', exchange: 'crypto.com', label: 'Crypto.com 2', verified: true },
 ];
 
 /**
@@ -1626,6 +1700,13 @@ const BLOFIN_WALLETS: CexWalletAddress[] = [
 ];
 
 /**
+ * Robinhood hot wallets on Polygon
+ */
+const ROBINHOOD_WALLETS: CexWalletAddress[] = [
+  { address: '0xa26e73C8E9507D50bF808B7A2CA9D5dE4fcC4A04', exchange: 'robinhood', label: 'Robinhood 1', verified: true },
+];
+
+/**
  * All CEX wallets combined
  */
 export const ALL_CEX_WALLETS: CexWalletAddress[] = [
@@ -1644,6 +1725,7 @@ export const ALL_CEX_WALLETS: CexWalletAddress[] = [
   ...MOONPAY_WALLETS,
   ...REVOLUT_WALLETS,
   ...BLOFIN_WALLETS,
+  ...ROBINHOOD_WALLETS,
 ];
 
 /**
