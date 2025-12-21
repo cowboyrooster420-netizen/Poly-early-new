@@ -14,9 +14,7 @@
 
 export interface CexWalletAddress {
   address: string;
-  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'bybit' | 'crypto.com';
-  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'mexc' | 'coinw' | 'delta' | 'gate';
-  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'bybit';
+  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'bybit' | 'crypto.com' | 'mexc' | 'coinw' | 'delta' | 'gate' | 'moonpay' | 'revolut' | 'blofin';
   label: string;
   verified: boolean;
   notes?: string;
@@ -1412,6 +1410,12 @@ const OKX_WALLETS: CexWalletAddress[] = [
     label: 'OKX 4',
     verified: true,
   },
+  {
+    address: '0x343d752bB710c5575E417edB3F9FA06241A4749A',
+    exchange: 'okx',
+    label: 'OKX 5',
+    verified: true,
+  },
 ];
 
 /**
@@ -1598,6 +1602,30 @@ const CRYPTO_COM_WALLETS: CexWalletAddress[] = [
 ];
 
 /**
+ * Moonpay hot wallets on Polygon
+ */
+const MOONPAY_WALLETS: CexWalletAddress[] = [
+  { address: '0x1440ec793aE50fA046B95bFeCa5aF475b6003f9e', exchange: 'moonpay', label: 'Moonpay 1', verified: true },
+  { address: '0xD42f958E1C3e2a10e5d66343c4c9a57726E5b4b6', exchange: 'moonpay', label: 'Moonpay 2', verified: true },
+  { address: '0x22F6CC8738308a8c92a6a71ea67832463d1Fec0d', exchange: 'moonpay', label: 'Moonpay 3', verified: true },
+];
+
+/**
+ * Revolut hot wallets on Polygon
+ */
+const REVOLUT_WALLETS: CexWalletAddress[] = [
+  { address: '0xb23360CCDd9Ed1b15D45E5d3824Bb409C8D7c460', exchange: 'revolut', label: 'Revolut 1', verified: true },
+  { address: '0xF7C8dA79da4CB294C4f55DFeBB1B404E3E38d921', exchange: 'revolut', label: 'Revolut 2', verified: true },
+];
+
+/**
+ * Blofin hot wallets on Polygon
+ */
+const BLOFIN_WALLETS: CexWalletAddress[] = [
+  { address: '0x7Ff8bbf9C8AB106db589e7863fb100525F61CCe5', exchange: 'blofin', label: 'Blofin 1', verified: true },
+];
+
+/**
  * All CEX wallets combined
  */
 export const ALL_CEX_WALLETS: CexWalletAddress[] = [
@@ -1613,6 +1641,9 @@ export const ALL_CEX_WALLETS: CexWalletAddress[] = [
   ...GATE_WALLETS,
   ...BYBIT_WALLETS,
   ...CRYPTO_COM_WALLETS,
+  ...MOONPAY_WALLETS,
+  ...REVOLUT_WALLETS,
+  ...BLOFIN_WALLETS,
 ];
 
 /**
