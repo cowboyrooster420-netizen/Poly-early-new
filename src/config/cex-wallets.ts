@@ -14,7 +14,7 @@
 
 export interface CexWalletAddress {
   address: string;
-  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'bybit';
+  exchange: 'coinbase' | 'binance' | 'kraken' | 'gemini' | 'okx' | 'kucoin' | 'bybit' | 'crypto.com';
   label: string;
   verified: boolean;
   notes?: string;
@@ -58,6 +58,42 @@ const COINBASE_WALLETS: CexWalletAddress[] = [
     address: '0x9810762578aCCF1F314320CCa5B72506aE7D7630',
     exchange: 'coinbase',
     label: 'Coinbase 6',
+    verified: true,
+  },
+  {
+    address: '0xc9AAA6cA0e05B87d53A3E51Edbc44b406EEaF299',
+    exchange: 'coinbase',
+    label: 'Coinbase 7',
+    verified: true,
+  },
+  {
+    address: '0x4D8336bDa6C11BD2a805C291Ec719BaeDD10AcB9',
+    exchange: 'coinbase',
+    label: 'Coinbase 8',
+    verified: true,
+  },
+  {
+    address: '0xE86F3aaA57F63B2AfeCA68178182a91bC3909962',
+    exchange: 'coinbase',
+    label: 'Coinbase 9',
+    verified: true,
+  },
+  {
+    address: '0x760DcE7eA6e8BA224BFFBEB8a7ff4Dd1Ef122BfF',
+    exchange: 'coinbase',
+    label: 'Coinbase 10',
+    verified: true,
+  },
+  {
+    address: '0x2a410f11A6F520398447bF423DceDd25DFd3a568',
+    exchange: 'coinbase',
+    label: 'Coinbase 11',
+    verified: true,
+  },
+  {
+    address: '0x14AF92363379f3548958f9de1fb2e6E5DF74476e',
+    exchange: 'coinbase',
+    label: 'Coinbase 12',
     verified: true,
   },
 ];
@@ -252,6 +288,12 @@ const OKX_WALLETS: CexWalletAddress[] = [
     label: 'OKX 3',
     verified: true,
   },
+  {
+    address: '0x06959153B974D0D5fDfd87D561db6d8d4FA0bb0B',
+    exchange: 'okx',
+    label: 'OKX 4',
+    verified: true,
+  },
 ];
 
 /**
@@ -323,6 +365,13 @@ const BYBIT_WALLETS: CexWalletAddress[] = [
 ];
 
 /**
+ * Crypto.com hot wallets on Polygon
+ */
+const CRYPTO_COM_WALLETS: CexWalletAddress[] = [
+  { address: '0xfa0b641678F5115ad8a8De5752016bD1359681b9', exchange: 'crypto.com', label: 'Crypto.com 1', verified: true },
+];
+
+/**
  * All CEX wallets combined
  */
 export const ALL_CEX_WALLETS: CexWalletAddress[] = [
@@ -333,6 +382,7 @@ export const ALL_CEX_WALLETS: CexWalletAddress[] = [
   ...OKX_WALLETS,
   ...KUCOIN_WALLETS,
   ...BYBIT_WALLETS,
+  ...CRYPTO_COM_WALLETS,
 ];
 
 /**
