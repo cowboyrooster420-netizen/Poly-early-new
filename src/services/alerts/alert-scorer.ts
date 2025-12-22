@@ -6,11 +6,10 @@ import type { WalletFingerprint } from '../blockchain/wallet-forensics.js';
  * Alert confidence score breakdown
  */
 export interface AlertScore {
-  totalScore: number; // 0-100
+  totalScore: number; // 0-90 (trade size 0-40 + wallet 0-50)
   breakdown: {
     tradeSize: number; // 0-40 points
     walletSuspicion: number; // 0-50 points
-    timing: number; // 0-10 points (placeholder for future timing analysis)
   };
   classification: 'low' | 'medium' | 'high' | 'critical';
   recommendation: 'ignore' | 'monitor' | 'investigate' | 'alert';
@@ -47,7 +46,7 @@ class AlertScorerService {
 
   /**
    * Calculate confidence score for an alert
-   * Combines trade size and wallet suspicion into 0-100 score
+   * Combines trade size (0-40) and wallet suspicion (0-50) into 0-90 score
    */
   public calculateScore(params: {
     tradeSignal: TradeSignal;
@@ -58,13 +57,9 @@ class AlertScorerService {
     // Calculate individual component scores
     const tradeSizeScore = this.scoreTradeSizeSignal(tradeSignal);
     const walletScore = this.scoreWalletSuspicion(walletFingerprint);
-    const timingScore = 0; // Placeholder for future timing analysis
 
-    // Total score (max 100)
-    const totalScore = Math.min(
-      100,
-      tradeSizeScore + walletScore + timingScore
-    );
+    // Total score (max 90)
+    const totalScore = tradeSizeScore + walletScore;
 
     // Classify alert
     const classification = this.classifyScore(totalScore);
@@ -75,7 +70,6 @@ class AlertScorerService {
       breakdown: {
         tradeSize: Math.round(tradeSizeScore),
         walletSuspicion: Math.round(walletScore),
-        timing: timingScore,
       },
       classification,
       recommendation,
@@ -115,42 +109,37 @@ class AlertScorerService {
 
   /**
    * Score wallet suspicion (0-50 points)
-   * More suspicious flags = higher score
+   * Weights optimized for reliable detection without CEX dependency
    */
   private scoreWalletSuspicion(wallet: WalletFingerprint): number {
     let score = 0;
 
-    // Base score for suspicious wallet
-    if (wallet.isSuspicious) {
-      score += 18; // Wallet has >= 3 flags
-    }
-
-    // Individual flag scoring
+    // Individual flag scoring (no bonus for isSuspicious - linear scoring)
     const { flags } = wallet;
 
-    // CEX funded (6 points) - moderate signal
+    // Low transaction count (14 points) - strongest reliable signal
+    if (flags.lowTxCount) {
+      score += 14;
+    }
+
+    // Young wallet (12 points) - very strong reliable signal
+    if (flags.youngWallet) {
+      score += 12;
+    }
+
+    // High Polymarket netflow (12 points) - strong reliable signal
+    if (flags.highPolymarketNetflow) {
+      score += 12;
+    }
+
+    // Single purpose wallet (6 points) - moderate signal
+    if (flags.singlePurpose) {
+      score += 6;
+    }
+
+    // CEX funded (6 points) - unreliable (depends on wallet list)
     if (flags.cexFunded) {
       score += 6;
-    }
-
-    // Low transaction count (10 points) - strong signal
-    if (flags.lowTxCount) {
-      score += 10;
-    }
-
-    // Young wallet (9 points) - strong signal
-    if (flags.youngWallet) {
-      score += 9;
-    }
-
-    // High Polymarket netflow (6 points) - moderate signal
-    if (flags.highPolymarketNetflow) {
-      score += 6;
-    }
-
-    // Single purpose wallet (2 points) - weak signal
-    if (flags.singlePurpose) {
-      score += 2;
     }
 
     return Math.min(50, score); // Cap at 50

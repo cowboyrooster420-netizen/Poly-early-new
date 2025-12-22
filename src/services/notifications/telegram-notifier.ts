@@ -129,8 +129,7 @@ class TelegramNotifierService {
     // Signal breakdown
     message += `📈 *Signal Breakdown*\n`;
     message += `• Trade Size: ${alert.scoreBreakdown.tradeSize}pts\n`;
-    message += `• Wallet Suspicion: ${alert.scoreBreakdown.walletSuspicion}pts\n`;
-    message += `• Timing: ${alert.scoreBreakdown.timing}pts\n\n`;
+    message += `• Wallet Suspicion: ${alert.scoreBreakdown.walletSuspicion}pts\n\n`;
 
     // Wallet analysis
     message += `🔍 *Wallet Analysis*\n`;
