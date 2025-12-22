@@ -18,6 +18,7 @@ interface GammaMarket {
   slug: string;
   outcomes: string;
   outcomePrices: string;
+  liquidity: string;
   volume: string;
   active: boolean;
   closed: boolean;
@@ -116,14 +117,22 @@ export async function registerMarketRoutes(
           }
 
           // Insert into database
+          const openInterest = parseFloat(market.liquidity) || 0;
+          const volume = parseFloat(market.volume) || 0;
+
+          logger.info(
+            { marketId: market.id, openInterest, volume },
+            'Market OI and volume from API'
+          );
+
           const created = await prisma.market.create({
             data: {
               id: market.id,
               question: market.question,
               slug: market.slug || `${slug}-${market.id.slice(0, 8)}`,
               conditionId: market.conditionId,
-              openInterest: 0,
-              volume: parseFloat(market.volume) || 0,
+              openInterest,
+              volume,
               active: market.active,
               closed: market.closed,
               enabled: true,
