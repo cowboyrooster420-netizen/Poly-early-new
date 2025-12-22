@@ -129,7 +129,11 @@ class MarketService {
             question: m.question,
             slug: m.slug,
             tier: m.tier as 1 | 2 | 3,
-            category: m.category as 'politics' | 'corporate' | 'sports' | 'misc',
+            category: m.category as
+              | 'politics'
+              | 'corporate'
+              | 'sports'
+              | 'misc',
             enabled: m.enabled,
             openInterest: m.openInterest.toString(),
             volume: m.volume.toString(),
@@ -226,7 +230,10 @@ class MarketService {
    */
   public getMarketByAssetId(assetId: string): MarketConfig | undefined {
     for (const market of this.monitoredMarkets.values()) {
-      if (market.clobTokenIdYes === assetId || market.clobTokenIdNo === assetId) {
+      if (
+        market.clobTokenIdYes === assetId ||
+        market.clobTokenIdNo === assetId
+      ) {
         return market;
       }
     }
@@ -376,6 +383,7 @@ class MarketService {
 
     let updated = 0;
     let failed = 0;
+    let zeroOI = 0;
 
     for (const market of markets) {
       try {
@@ -388,8 +396,30 @@ class MarketService {
           }
         );
 
-        const newOI = parseFloat(response.data.liquidity) || 0;
-        const newVolume = parseFloat(response.data.volume) || 0;
+        // Validate liquidity field exists
+        const rawLiquidity = response.data.liquidity;
+        const rawVolume = response.data.volume;
+
+        if (rawLiquidity === undefined || rawLiquidity === null) {
+          logger.warn(
+            {
+              marketId: market.id,
+              responseKeys: Object.keys(response.data),
+            },
+            'Gamma API response missing liquidity field'
+          );
+        }
+
+        const newOI = parseFloat(rawLiquidity) || 0;
+        const newVolume = parseFloat(rawVolume) || 0;
+
+        if (newOI === 0) {
+          zeroOI++;
+          logger.debug(
+            { marketId: market.id, rawLiquidity },
+            'Market has zero OI'
+          );
+        }
 
         // Update database
         const prisma = db.getClient();
@@ -407,10 +437,14 @@ class MarketService {
         this.monitoredMarkets.set(market.id, market);
 
         // Update Redis cache
-        await redis.setJSON(`market:data:${market.id}`, {
-          openInterest: newOI.toString(),
-          volume: newVolume.toString(),
-        }, 300); // 5 min cache for signal detector
+        await redis.setJSON(
+          `market:data:${market.id}`,
+          {
+            openInterest: newOI.toString(),
+            volume: newVolume.toString(),
+          },
+          300
+        ); // 5 min cache for signal detector
 
         updated++;
       } catch (error) {
@@ -426,7 +460,7 @@ class MarketService {
     }
 
     logger.info(
-      { updated, failed, total: markets.length },
+      { updated, failed, zeroOI, total: markets.length },
       'OI refresh complete'
     );
   }
