@@ -26,7 +26,7 @@ Production-grade automated detection system for identifying potentially informed
 - **Multipliers**:
   - Small market (<$25k OI): 2x multiplier on OI score
   - Quiet market (8+ hours): 2x multiplier on OI score
-- **Classification**: STRONG_INSIDER (95+) / HIGH (85+) / MEDIUM (70+) / LOG_ONLY (50+)
+- **Classification**: STRONG_INSIDER (90+) / HIGH (80+) / MEDIUM (70+) / LOG_ONLY (50+)
 - **Alert Threshold**: Score ≥ 70 triggers notifications
 
 ### 📨 Notifications

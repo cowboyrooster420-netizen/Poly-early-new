@@ -158,7 +158,7 @@ class AlertPersistenceService {
    * Get alerts by classification
    */
   public async getAlertsByClassification(
-    classification: 'low' | 'medium' | 'high' | 'critical',
+    classification: AlertClassification,
     limit = 10
   ): Promise<unknown[]> {
     try {
@@ -232,41 +232,55 @@ class AlertPersistenceService {
    */
   public async getAlertStats(): Promise<{
     total: number;
-    critical: number;
-    high: number;
+    strongInsider: number;
+    highConfidence: number;
     medium: number;
-    low: number;
+    logOnly: number;
     last24h: number;
   }> {
     try {
       const prisma = db.getClient();
 
-      const [total, critical, high, medium, low, last24h] = await Promise.all([
-        prisma.alert.count({ where: { dismissed: false } }),
-        prisma.alert.count({
-          where: { classification: 'critical', dismissed: false },
-        }),
-        prisma.alert.count({
-          where: { classification: 'high', dismissed: false },
-        }),
-        prisma.alert.count({
-          where: { classification: 'medium', dismissed: false },
-        }),
-        prisma.alert.count({
-          where: { classification: 'low', dismissed: false },
-        }),
-        prisma.alert.count({
-          where: {
-            timestamp: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-            dismissed: false,
-          },
-        }),
-      ]);
+      const [total, strongInsider, highConfidence, medium, logOnly, last24h] =
+        await Promise.all([
+          prisma.alert.count({ where: { dismissed: false } }),
+          prisma.alert.count({
+            where: { classification: 'ALERT_STRONG_INSIDER', dismissed: false },
+          }),
+          prisma.alert.count({
+            where: {
+              classification: 'ALERT_HIGH_CONFIDENCE',
+              dismissed: false,
+            },
+          }),
+          prisma.alert.count({
+            where: {
+              classification: 'ALERT_MEDIUM_CONFIDENCE',
+              dismissed: false,
+            },
+          }),
+          prisma.alert.count({
+            where: { classification: 'LOG_ONLY', dismissed: false },
+          }),
+          prisma.alert.count({
+            where: {
+              timestamp: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+              dismissed: false,
+            },
+          }),
+        ]);
 
-      return { total, critical, high, medium, low, last24h };
+      return { total, strongInsider, highConfidence, medium, logOnly, last24h };
     } catch (error) {
       logger.error({ error }, 'Failed to get alert stats');
-      return { total: 0, critical: 0, high: 0, medium: 0, low: 0, last24h: 0 };
+      return {
+        total: 0,
+        strongInsider: 0,
+        highConfidence: 0,
+        medium: 0,
+        logOnly: 0,
+        last24h: 0,
+      };
     }
   }
 }
