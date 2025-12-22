@@ -80,6 +80,29 @@ class AlertScorerService {
     const openInterest = parseFloat(tradeSignal.openInterest);
     const tradeUsdValue = tradeSignal.tradeUsdValue;
 
+    // ----------------------------------
+    // 0. VALIDATE INPUTS (prevent NaN propagation)
+    // ----------------------------------
+    if (isNaN(openInterest) || openInterest <= 0) {
+      return this.createIgnoreResult(
+        `Invalid open interest: ${tradeSignal.openInterest}`
+      );
+    }
+    if (isNaN(tradeUsdValue) || tradeUsdValue <= 0) {
+      return this.createIgnoreResult(
+        `Invalid trade USD value: ${tradeUsdValue}`
+      );
+    }
+    if (
+      isNaN(entryProbability) ||
+      entryProbability < 0 ||
+      entryProbability > 1
+    ) {
+      return this.createIgnoreResult(
+        `Invalid entry probability: ${entryProbability}`
+      );
+    }
+
     // Rescale wallet score from 0-50 to 0-100
     const walletScore100 = this.calculateWalletScore(walletFingerprint) * 2;
 
@@ -324,10 +347,11 @@ class AlertScorerService {
 
   /**
    * Classify final score
+   * Max possible: 50 (wallet) + 35 (OI) + 6 (extremity 15% of 40) = 91
    */
   private classify(score: number): AlertClassification {
-    if (score >= 95) return 'ALERT_STRONG_INSIDER';
-    if (score >= 85) return 'ALERT_HIGH_CONFIDENCE';
+    if (score >= 90) return 'ALERT_STRONG_INSIDER';
+    if (score >= 80) return 'ALERT_HIGH_CONFIDENCE';
     if (score >= 70) return 'ALERT_MEDIUM_CONFIDENCE';
     if (score >= 50) return 'LOG_ONLY';
     return 'IGNORE';
