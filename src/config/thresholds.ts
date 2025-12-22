@@ -46,7 +46,7 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
   maxWalletTransactions: 40,
   minWalletAgeInDays: 90,
   minNetflowPercentage: 85,
-  cexFundingWindowDays: 14,
+  cexFundingWindowDays: 7,
 };
 
 /**
