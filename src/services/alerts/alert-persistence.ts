@@ -1,7 +1,7 @@
 import { db, type PrismaClient } from '../database/prisma.js';
 import { notificationCoordinator } from '../notifications/notification-coordinator.js';
 import { logger } from '../../utils/logger.js';
-import type { AlertScore } from './alert-scorer.js';
+import type { AlertScore, AlertClassification } from './alert-scorer.js';
 import type { TradeSignal } from '../../types/index.js';
 import type { WalletFingerprint } from '../blockchain/wallet-forensics.js';
 
@@ -17,7 +17,7 @@ export interface AlertData {
   tradeSide: 'BUY' | 'SELL';
   timestamp: Date;
   confidenceScore: number;
-  classification: 'low' | 'medium' | 'high' | 'critical';
+  classification: AlertClassification;
   tradeSignal: TradeSignal;
   walletFingerprint: WalletFingerprint;
   scoreBreakdown: AlertScore['breakdown'];
@@ -93,11 +93,11 @@ class AlertPersistenceService {
             walletPolymarketNetflowPercentage:
               data.walletFingerprint.metadata.polymarketNetflowPercentage,
 
-            // Score breakdown
-            scoreTradeSize: data.scoreBreakdown.tradeSize,
-            scoreDormancy: 0, // Dormancy no longer used in scoring
-            scoreWalletSuspicion: data.scoreBreakdown.walletSuspicion,
-            scoreTiming: null, // Timing removed from scoring
+            // Score breakdown (v2 - tiered scoring with multipliers)
+            scoreTradeSize: data.scoreBreakdown.oiContribution, // OI contribution (35% weight)
+            scoreDormancy: 0, // Stored in multipliers now
+            scoreWalletSuspicion: data.scoreBreakdown.walletContribution, // Wallet contribution (50% weight)
+            scoreTiming: data.scoreBreakdown.extremityContribution, // Extremity contribution (15% weight)
 
             // Alert metadata
             notified: false,
@@ -205,7 +205,11 @@ class AlertPersistenceService {
   public async dismissAlert(alertId: string, notes?: string): Promise<void> {
     try {
       const prisma = db.getClient();
-      const updateData: { dismissed: boolean; dismissedAt: Date; notes?: string } = {
+      const updateData: {
+        dismissed: boolean;
+        dismissedAt: Date;
+        notes?: string;
+      } = {
         dismissed: true,
         dismissedAt: new Date(),
       };
