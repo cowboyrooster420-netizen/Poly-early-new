@@ -9,6 +9,8 @@ interface GammaMarketResponse {
   id: string;
   volume: string;
   liquidity: string;
+  volumeNum?: number;
+  liquidityNum?: number;
 }
 
 /**
@@ -396,27 +398,21 @@ class MarketService {
           }
         );
 
-        // Validate liquidity field exists
-        const rawLiquidity = response.data.liquidity;
-        const rawVolume = response.data.volume;
-
-        if (rawLiquidity === undefined || rawLiquidity === null) {
-          logger.warn(
-            {
-              marketId: market.id,
-              responseKeys: Object.keys(response.data),
-            },
-            'Gamma API response missing liquidity field'
-          );
-        }
-
-        const newOI = parseFloat(rawLiquidity) || 0;
-        const newVolume = parseFloat(rawVolume) || 0;
+        // Prefer numeric fields (more reliable), fall back to string parsing
+        const newOI =
+          response.data.liquidityNum ??
+          (parseFloat(response.data.liquidity) || 0);
+        const newVolume =
+          response.data.volumeNum ?? (parseFloat(response.data.volume) || 0);
 
         if (newOI === 0) {
           zeroOI++;
           logger.debug(
-            { marketId: market.id, rawLiquidity },
+            {
+              marketId: market.id,
+              liquidityNum: response.data.liquidityNum,
+              liquidity: response.data.liquidity,
+            },
             'Market has zero OI'
           );
         }
