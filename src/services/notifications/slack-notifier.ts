@@ -196,11 +196,7 @@ class SlackNotifierService {
           },
           {
             type: 'mrkdwn',
-            text: `*Timing:*\n${alert.scoreBreakdown.timing}pts`,
-          },
-          {
-            type: 'mrkdwn',
-            text: `*Total:*\n${alert.confidenceScore}/100`,
+            text: `*Total:*\n${alert.confidenceScore}/90`,
           },
         ],
       },

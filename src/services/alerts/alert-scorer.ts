@@ -6,11 +6,10 @@ import type { WalletFingerprint } from '../blockchain/wallet-forensics.js';
  * Alert confidence score breakdown
  */
 export interface AlertScore {
-  totalScore: number; // 0-100
+  totalScore: number; // 0-90 (trade size 0-40 + wallet 0-50)
   breakdown: {
     tradeSize: number; // 0-40 points
     walletSuspicion: number; // 0-50 points
-    timing: number; // 0-10 points (placeholder for future timing analysis)
   };
   classification: 'low' | 'medium' | 'high' | 'critical';
   recommendation: 'ignore' | 'monitor' | 'investigate' | 'alert';
@@ -47,7 +46,7 @@ class AlertScorerService {
 
   /**
    * Calculate confidence score for an alert
-   * Combines trade size and wallet suspicion into 0-100 score
+   * Combines trade size (0-40) and wallet suspicion (0-50) into 0-90 score
    */
   public calculateScore(params: {
     tradeSignal: TradeSignal;
@@ -58,13 +57,9 @@ class AlertScorerService {
     // Calculate individual component scores
     const tradeSizeScore = this.scoreTradeSizeSignal(tradeSignal);
     const walletScore = this.scoreWalletSuspicion(walletFingerprint);
-    const timingScore = 0; // Placeholder for future timing analysis
 
-    // Total score (max 100)
-    const totalScore = Math.min(
-      100,
-      tradeSizeScore + walletScore + timingScore
-    );
+    // Total score (max 90)
+    const totalScore = tradeSizeScore + walletScore;
 
     // Classify alert
     const classification = this.classifyScore(totalScore);
@@ -75,7 +70,6 @@ class AlertScorerService {
       breakdown: {
         tradeSize: Math.round(tradeSizeScore),
         walletSuspicion: Math.round(walletScore),
-        timing: timingScore,
       },
       classification,
       recommendation,

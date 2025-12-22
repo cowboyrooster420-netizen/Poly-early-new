@@ -97,7 +97,7 @@ class AlertPersistenceService {
             scoreTradeSize: data.scoreBreakdown.tradeSize,
             scoreDormancy: 0, // Dormancy no longer used in scoring
             scoreWalletSuspicion: data.scoreBreakdown.walletSuspicion,
-            scoreTiming: data.scoreBreakdown.timing,
+            scoreTiming: null, // Timing removed from scoring
 
             // Alert metadata
             notified: false,
