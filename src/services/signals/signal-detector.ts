@@ -57,27 +57,17 @@ class SignalDetector {
         parseFloat(marketData.openInterest)
       );
 
-      // Get price before/after (simplified - in real impl would track orderbook)
-      const priceImpact = await this.estimatePriceImpact(trade);
-
-      // Check if trade meets minimum thresholds
-      const meetsOiThreshold = oiPercentage >= thresholds.minOiPercentage;
-      const meetsPriceThreshold = priceImpact >= thresholds.minPriceImpact;
-
-      if (!meetsOiThreshold && !meetsPriceThreshold) {
+      // Check if trade meets minimum OI threshold
+      if (oiPercentage < thresholds.minOiPercentage) {
         logger.debug(
           {
             tradeId: trade.id,
             tradeUsdValue: tradeUsdValue.toFixed(2),
             openInterest: marketData.openInterest,
             oiPercentage: oiPercentage.toFixed(2),
-            priceImpact: priceImpact.toFixed(2),
-            thresholds: {
-              minOi: thresholds.minOiPercentage,
-              minPrice: thresholds.minPriceImpact,
-            },
+            threshold: thresholds.minOiPercentage,
           },
-          'Trade does not meet size/impact thresholds'
+          'Trade does not meet OI threshold'
         );
         return null;
       }
@@ -90,8 +80,8 @@ class SignalDetector {
         tradeSize: trade.size,
         openInterest: marketData.openInterest,
         oiPercentage,
-        priceImpact,
-        priceBeforeTrade: '0', // TODO: implement orderbook tracking
+        priceImpact: 0, // Deprecated - not used in scoring
+        priceBeforeTrade: '0',
         priceAfterTrade: trade.price,
         tradeUsdValue,
         timestamp: trade.timestamp,
@@ -105,7 +95,6 @@ class SignalDetector {
           tradeUsdValue: tradeUsdValue.toFixed(2),
           openInterest: marketData.openInterest,
           oiPercentage: oiPercentage.toFixed(2),
-          priceImpact: priceImpact.toFixed(2),
         },
         '🚨 Large trade detected'
       );
@@ -273,62 +262,15 @@ class SignalDetector {
    * @param tradeUsdValue - Trade value in USD (shares * price)
    * @param openInterest - Market liquidity in USD
    */
-  private calculateOiPercentage(tradeUsdValue: number, openInterest: number): number {
+  private calculateOiPercentage(
+    tradeUsdValue: number,
+    openInterest: number
+  ): number {
     if (openInterest === 0) {
       return 0;
     }
 
     return (tradeUsdValue / openInterest) * 100;
-  }
-
-  /**
-   * Estimate price impact of trade
-   * Simplified - real implementation would use orderbook depth
-   */
-  private async estimatePriceImpact(trade: PolymarketTrade): Promise<number> {
-    try {
-      // Get recent trades to estimate price before
-      const prisma = db.getClient();
-
-      const recentTrades = await prisma.trade.findMany({
-        where: {
-          marketId: trade.marketId,
-          timestamp: {
-            lt: new Date(trade.timestamp),
-            gte: new Date(trade.timestamp - 300000), // Last 5 minutes
-          },
-        },
-        orderBy: { timestamp: 'desc' },
-        take: 10,
-      });
-
-      if (recentTrades.length === 0) {
-        // No trades in last 5 minutes, can't calculate impact
-        return 0;
-      }
-
-      // Calculate average price before
-      const avgPriceBefore =
-        recentTrades.reduce(
-          (sum: number, t: { price: Decimal }) =>
-            sum + parseFloat(t.price.toString()),
-          0
-        ) / recentTrades.length;
-
-      const currentPrice = parseFloat(trade.price);
-
-      // Calculate percentage change
-      const priceChange = Math.abs(currentPrice - avgPriceBefore);
-      const percentChange = (priceChange / avgPriceBefore) * 100;
-
-      return percentChange;
-    } catch (error) {
-      logger.error(
-        { error, tradeId: trade.id },
-        'Failed to estimate price impact'
-      );
-      return 0;
-    }
   }
 
   /**
