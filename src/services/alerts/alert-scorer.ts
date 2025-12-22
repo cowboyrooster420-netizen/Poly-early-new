@@ -128,24 +128,24 @@ class AlertScorerService {
     // Individual flag scoring
     const { flags } = wallet;
 
-    // CEX funded (12 points) - very strong signal
+    // CEX funded (6 points) - moderate signal
     if (flags.cexFunded) {
-      score += 12;
+      score += 6;
     }
 
-    // Low transaction count (8 points) - strong signal
+    // Low transaction count (10 points) - strong signal
     if (flags.lowTxCount) {
-      score += 8;
+      score += 10;
     }
 
-    // Young wallet (7 points) - moderate signal
+    // Young wallet (9 points) - strong signal
     if (flags.youngWallet) {
-      score += 7;
+      score += 9;
     }
 
-    // High Polymarket netflow (4 points) - moderate signal
+    // High Polymarket netflow (6 points) - moderate signal
     if (flags.highPolymarketNetflow) {
-      score += 4;
+      score += 6;
     }
 
     // Single purpose wallet (2 points) - weak signal
