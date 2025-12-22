@@ -149,7 +149,7 @@ class SlackNotifierService {
           },
           {
             type: 'mrkdwn',
-            text: `*Classification:*\n${alert.classification.toUpperCase()}`,
+            text: `*Classification:*\n${this.formatClassification(alert.classification)}`,
           },
           {
             type: 'mrkdwn',
@@ -175,12 +175,12 @@ class SlackNotifierService {
         type: 'divider',
       },
 
-      // Signal metrics
+      // Score breakdown (v2 - weighted contributions)
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: '*📊 Signal Metrics*',
+          text: '*📊 Score Breakdown*',
         },
       },
       {
@@ -188,15 +188,19 @@ class SlackNotifierService {
         fields: [
           {
             type: 'mrkdwn',
-            text: `*Trade Size:*\n${alert.scoreBreakdown.tradeSize}pts`,
+            text: `*Wallet (50%):*\n${alert.scoreBreakdown.walletContribution}pts`,
           },
           {
             type: 'mrkdwn',
-            text: `*Wallet:*\n${alert.scoreBreakdown.walletSuspicion}pts`,
+            text: `*OI/Size (35%):*\n${alert.scoreBreakdown.oiContribution}pts`,
           },
           {
             type: 'mrkdwn',
-            text: `*Total:*\n${alert.confidenceScore}/90`,
+            text: `*Extremity (15%):*\n${alert.scoreBreakdown.extremityContribution}pts`,
+          },
+          {
+            type: 'mrkdwn',
+            text: `*Total:*\n${alert.confidenceScore}/100`,
           },
         ],
       },
@@ -279,19 +283,36 @@ class SlackNotifierService {
   /**
    * Get emoji for classification
    */
-  private getEmojiForClassification(
-    classification: 'low' | 'medium' | 'high' | 'critical'
-  ): string {
+  private getEmojiForClassification(classification: string): string {
     switch (classification) {
-      case 'critical':
+      case 'ALERT_STRONG_INSIDER':
         return '🚨';
-      case 'high':
+      case 'ALERT_HIGH_CONFIDENCE':
         return '⚠️';
-      case 'medium':
+      case 'ALERT_MEDIUM_CONFIDENCE':
         return '⚡';
-      case 'low':
-      default:
+      case 'LOG_ONLY':
         return 'ℹ️';
+      default:
+        return '📊';
+    }
+  }
+
+  /**
+   * Format classification for display
+   */
+  private formatClassification(classification: string): string {
+    switch (classification) {
+      case 'ALERT_STRONG_INSIDER':
+        return '🔴 STRONG INSIDER';
+      case 'ALERT_HIGH_CONFIDENCE':
+        return '🟠 HIGH CONFIDENCE';
+      case 'ALERT_MEDIUM_CONFIDENCE':
+        return '🟡 MEDIUM';
+      case 'LOG_ONLY':
+        return '⚪ LOG ONLY';
+      default:
+        return classification;
     }
   }
 

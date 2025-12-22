@@ -93,7 +93,8 @@ class TradeService {
       }
 
       // Determine outcome based on which token ID matched
-      const outcome: 'yes' | 'no' = market.clobTokenIdYes === assetId ? 'yes' : 'no';
+      const outcome: 'yes' | 'no' =
+        market.clobTokenIdYes === assetId ? 'yes' : 'no';
 
       // Create a trade object with the correct market ID for database storage
       const tradeWithMarketId: PolymarketTrade = {
@@ -112,8 +113,8 @@ class TradeService {
           size: tradeWithMarketId.size,
           price: tradeWithMarketId.price,
           outcome,
-          maker: tradeWithMarketId.maker?.substring(0, 8) + '...' || 'unknown',
-          taker: tradeWithMarketId.taker?.substring(0, 8) + '...' || 'unknown',
+          maker: tradeWithMarketId.maker.substring(0, 8) + '...' || 'unknown',
+          taker: tradeWithMarketId.taker.substring(0, 8) + '...' || 'unknown',
         },
         'Processing trade'
       );
@@ -173,6 +174,12 @@ class TradeService {
    */
   private async detectSignals(trade: PolymarketTrade): Promise<void> {
     try {
+      // Always update last trade timestamp for dormancy tracking
+      await alertScorer.updateLastTradeTimestamp(
+        trade.marketId,
+        trade.timestamp
+      );
+
       // Step 1: Analyze trade for size/impact
       const signal = await signalDetector.analyzeTrade(trade);
 
@@ -186,10 +193,11 @@ class TradeService {
           tradeId: trade.id,
           marketId: trade.marketId,
           wallet: trade.taker.substring(0, 10) + '...',
+          tradeUsdValue: signal.tradeUsdValue.toFixed(2),
           oiPercentage: signal.oiPercentage.toFixed(2),
           priceImpact: signal.priceImpact.toFixed(2),
         },
-        '🎯 Large trade detected - analyzing wallet'
+        '🎯 Trade detected - analyzing wallet'
       );
 
       // Step 2: Analyze wallet fingerprint
@@ -210,21 +218,35 @@ class TradeService {
         '🔍 Wallet fingerprint analyzed'
       );
 
-      // Step 3: Calculate confidence score
-      const alertScore = alertScorer.calculateScore({
+      // Step 3: Calculate confidence score (v2 - tiered with multipliers)
+      const entryProbability = parseFloat(trade.price); // Price is the probability
+      const alertScore = await alertScorer.calculateScore({
         tradeSignal: signal,
         walletFingerprint,
+        entryProbability,
       });
+
+      // Check if filtered out by hard filters
+      if (!alertScore.filtersPassed) {
+        logger.debug(
+          {
+            tradeId: trade.id,
+            reason: alertScore.filterReason,
+          },
+          'Trade filtered out by hard filters'
+        );
+        return;
+      }
 
       logger.info(
         {
           tradeId: trade.id,
           totalScore: alertScore.totalScore,
           classification: alertScore.classification,
-          recommendation: alertScore.recommendation,
           breakdown: alertScore.breakdown,
+          multipliers: alertScore.multipliers,
         },
-        '📊 Alert score calculated'
+        '📊 Alert score calculated (v2)'
       );
 
       // Step 4: Generate alert if score >= threshold
@@ -252,15 +274,16 @@ class TradeService {
             score: alertScore.totalScore,
             classification: alertScore.classification,
           },
-          '🚨 HIGH CONFIDENCE INSIDER SIGNAL - ALERT CREATED'
+          '🚨 INSIDER SIGNAL DETECTED - ALERT CREATED'
         );
-      } else {
+      } else if (alertScorer.shouldLog(alertScore)) {
         logger.info(
           {
+            tradeId: trade.id,
             score: alertScore.totalScore,
             classification: alertScore.classification,
           },
-          'Signal detected but below alert threshold - monitoring only'
+          '📝 Signal logged (below alert threshold)'
         );
       }
     } catch (error) {

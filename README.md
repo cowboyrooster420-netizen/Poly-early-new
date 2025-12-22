@@ -7,23 +7,26 @@ Production-grade automated detection system for identifying potentially informed
 ## Features
 
 ### 🎯 Signal Detection
-- **OI-Relative Analysis**: Detects trades ≥20% of open interest or ≥20% price impact
+- **Hard Filters**: Trade ≥$1,000, Market OI ≥$5,000, Wallet score ≥40
 - **Real-time WebSocket**: Sub-second trade detection with automatic reconnection
-- **No Dormancy Gate**: All large trades are analyzed regardless of recent market activity
+- **Dormancy Detection**: Multiplier boost for trades on quiet markets (4-8+ hours inactive)
 
 ### 🔍 Wallet Forensics
-- **CEX Funding Detection**: Tracks wallets funded from 20+ known exchange addresses (14-day window)
+- **CEX Funding Detection**: Tracks wallets funded from 50+ known exchange addresses (14-day window)
 - **Wallet Age Analysis**: Flags wallets < 90 days old
 - **Transaction Heuristics**: Analyzes tx count (< 40 = suspicious), Polymarket netflow (≥ 85% = single-purpose)
 - **Protocol Diversity**: Checks interactions with other DeFi/gaming protocols
 - **Blockchain APIs**: Alchemy (25 req/sec) + Polygonscan (5 req/sec) with rate limiting
 
-### 📊 Alert Scoring
-- **0-100 Confidence Score** combining:
-  - Trade Size (0-40pts): OI% + price impact
-  - Wallet Suspicion (0-50pts): CEX funded, low tx, young wallet, high netflow, single-purpose
-  - Timing (0-10pts): Reserved for future leak-window detection
-- **Classification**: Low/Medium/High/Critical
+### 📊 Alert Scoring (v2 - Tiered with Multipliers)
+- **Weighted 0-100 Score** combining:
+  - **Wallet Suspicion (50%)**: Low tx, young wallet, high netflow, single-purpose, CEX funded
+  - **OI/Trade Size (35%)**: Tiered scoring with market size + dormancy multipliers
+  - **Entry Extremity (15%)**: Bonus for extreme odds (< 10% or > 90% probability)
+- **Multipliers**:
+  - Small market (<$25k OI): 2x multiplier on OI score
+  - Quiet market (8+ hours): 2x multiplier on OI score
+- **Classification**: STRONG_INSIDER (95+) / HIGH (85+) / MEDIUM (70+) / LOG_ONLY (50+)
 - **Alert Threshold**: Score ≥ 70 triggers notifications
 
 ### 📨 Notifications
@@ -266,11 +269,33 @@ Customize via environment variables or `src/config/thresholds.ts`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `MIN_OI_PERCENTAGE` | 20 | Minimum % of open interest for signal |
-| `MIN_PRICE_IMPACT` | 20 | Minimum % price impact for signal |
+| `MIN_OI_PERCENTAGE` | 5 | Gate threshold: min % of OI to analyze trade |
+| `MIN_PRICE_IMPACT` | 5 | Gate threshold: min % price impact to analyze trade |
 | `MAX_WALLET_TRANSACTIONS` | 40 | Max txs for "low activity" flag |
 | `MIN_NETFLOW_PERCENTAGE` | 85 | Min % netflow to Polymarket |
 | `CEX_FUNDING_WINDOW_DAYS` | 14 | Days to check for CEX funding |
+
+**Hard Filters (in scorer):**
+- Trade size ≥ $1,000
+- Market OI ≥ $5,000
+- Wallet score ≥ 40 (out of 100)
+
+**OI Score Tiers:**
+| OI Ratio | Base Score |
+|----------|------------|
+| < 2% | 0 |
+| 2-5% | 10 |
+| 5-10% | 25 |
+| 10-20% | 45 |
+| 20-35% | 70 |
+| 35%+ | 90 |
+
+**Extremity Bonuses:**
+| Entry Price | Bonus |
+|-------------|-------|
+| < 5% or > 95% | 40 pts |
+| < 10% or > 90% | 25 pts |
+| < 15% or > 85% | 15 pts |
 
 ### Market Selection
 
@@ -349,10 +374,12 @@ docker-compose logs bot | grep 'walletForensics'
 
 ### Key Log Events
 
-- `🎯 Large trade detected - analyzing wallet` - Trade meets OI/impact threshold
+- `🎯 Trade detected - analyzing wallet` - Trade passed gate threshold
 - `🔍 Wallet fingerprint analyzed` - Wallet forensics complete
-- `📊 Alert score calculated` - Scoring complete
-- `🚨 HIGH CONFIDENCE INSIDER SIGNAL` - Alert created (score ≥ 70)
+- `📊 Alert score calculated (v2)` - Tiered scoring complete with multipliers
+- `Trade filtered out by hard filters` - Trade didn't meet hard filter requirements
+- `🚨 INSIDER SIGNAL DETECTED` - Alert created (score ≥ 70)
+- `📝 Signal logged` - Trade scored 50-69 (LOG_ONLY)
 - `📨 Slack alert sent successfully` - Notification delivered
 
 ### Alert Statistics
@@ -397,9 +424,9 @@ const stats = await alertPersistence.getAlertStats();
 ### No Alerts Generated
 
 **Possible Causes:**
-1. **No large trades:** No trades meeting OI/impact thresholds (20%/20%)
-2. **Normal wallets:** Trades from wallets that don't show suspicious patterns
-3. **Thresholds too strict:** Consider lowering detection thresholds
+1. **Hard filters blocking:** Trade < $1k, Market OI < $5k, or Wallet score < 40
+2. **Normal wallets:** Trades from wallets that don't show suspicious patterns (need 2+ flags)
+3. **Low scores:** Trades scoring 50-69 go to LOG_ONLY (not alerted)
 4. **Market selection:** Not monitoring markets with enough activity
 
 **Diagnostics:**
@@ -407,11 +434,17 @@ const stats = await alertPersistence.getAlertStats();
 # Check if trades are being processed
 docker-compose logs bot | grep "Processing trade"
 
-# Check signal detection
-docker-compose logs bot | grep "Large trade detected"
+# Check gate threshold filtering
+docker-compose logs bot | grep "Trade detected"
+
+# Check hard filter rejections
+docker-compose logs bot | grep "filtered out by hard filters"
 
 # Check wallet analysis
 docker-compose logs bot | grep "Wallet fingerprint analyzed"
+
+# Check scoring results
+docker-compose logs bot | grep "Alert score calculated"
 ```
 
 ### Notification Failures

@@ -295,7 +295,7 @@ class SignalDetector {
           marketId: trade.marketId,
           timestamp: {
             lt: new Date(trade.timestamp),
-            gte: new Date(trade.timestamp - 60000), // Last minute
+            gte: new Date(trade.timestamp - 300000), // Last 5 minutes
           },
         },
         orderBy: { timestamp: 'desc' },
@@ -303,7 +303,7 @@ class SignalDetector {
       });
 
       if (recentTrades.length === 0) {
-        // No recent trades, assume minimal impact
+        // No trades in last 5 minutes, can't calculate impact
         return 0;
       }
 

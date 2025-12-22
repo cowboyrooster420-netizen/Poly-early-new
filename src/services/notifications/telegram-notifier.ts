@@ -114,9 +114,14 @@ class TelegramNotifierService {
       .replace('T', ' ')
       .substring(0, 19);
 
+    // Format classification for display
+    const classificationDisplay = this.formatClassification(
+      alert.classification
+    );
+
     // Build message
     let message = `${emoji} *INSIDER SIGNAL DETECTED*\n`;
-    message += `Score: *${alert.confidenceScore}/100* (${alert.classification.toUpperCase()})\n\n`;
+    message += `Score: *${alert.confidenceScore}/100* (${classificationDisplay})\n\n`;
 
     // Trade details
     message += `📊 *Trade Details*\n`;
@@ -126,10 +131,11 @@ class TelegramNotifierService {
     message += `• Time: ${timestamp} UTC\n`;
     message += `• [View Market](${polymarketUrl})\n\n`;
 
-    // Signal breakdown
-    message += `📈 *Signal Breakdown*\n`;
-    message += `• Trade Size: ${alert.scoreBreakdown.tradeSize}pts\n`;
-    message += `• Wallet Suspicion: ${alert.scoreBreakdown.walletSuspicion}pts\n\n`;
+    // Score breakdown (v2 - weighted contributions)
+    message += `📈 *Score Breakdown*\n`;
+    message += `• Wallet (50%): ${alert.scoreBreakdown.walletContribution}pts\n`;
+    message += `• OI/Size (35%): ${alert.scoreBreakdown.oiContribution}pts\n`;
+    message += `• Extremity (15%): ${alert.scoreBreakdown.extremityContribution}pts\n\n`;
 
     // Wallet analysis
     message += `🔍 *Wallet Analysis*\n`;
@@ -162,21 +168,38 @@ class TelegramNotifierService {
   }
 
   /**
+   * Format classification for display
+   */
+  private formatClassification(classification: string): string {
+    switch (classification) {
+      case 'ALERT_STRONG_INSIDER':
+        return '🔴 STRONG INSIDER';
+      case 'ALERT_HIGH_CONFIDENCE':
+        return '🟠 HIGH CONFIDENCE';
+      case 'ALERT_MEDIUM_CONFIDENCE':
+        return '🟡 MEDIUM';
+      case 'LOG_ONLY':
+        return '⚪ LOG ONLY';
+      default:
+        return classification.toUpperCase();
+    }
+  }
+
+  /**
    * Get emoji for classification
    */
-  private getEmojiForClassification(
-    classification: 'low' | 'medium' | 'high' | 'critical'
-  ): string {
+  private getEmojiForClassification(classification: string): string {
     switch (classification) {
-      case 'critical':
+      case 'ALERT_STRONG_INSIDER':
         return '🚨';
-      case 'high':
+      case 'ALERT_HIGH_CONFIDENCE':
         return '⚠️';
-      case 'medium':
+      case 'ALERT_MEDIUM_CONFIDENCE':
         return '⚡';
-      case 'low':
-      default:
+      case 'LOG_ONLY':
         return 'ℹ️';
+      default:
+        return '📊';
     }
   }
 
