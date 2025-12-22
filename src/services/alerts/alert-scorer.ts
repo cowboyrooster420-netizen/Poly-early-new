@@ -128,9 +128,9 @@ class AlertScorerService {
     // Individual flag scoring
     const { flags } = wallet;
 
-    // CEX funded (12 points) - very strong signal
+    // CEX funded (6 points) - moderate signal
     if (flags.cexFunded) {
-      score += 12;
+      score += 6;
     }
 
     // Low transaction count (8 points) - strong signal
