@@ -197,12 +197,10 @@ class WalletForensicsService {
     try {
       return await alchemyClient.getTransactionCount(address);
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(
-        {
-          error: error instanceof Error ? error.message : String(error),
-          address,
-        },
-        'Failed to get transaction count'
+        { error: errorMsg, address },
+        `Failed to get transaction count: ${errorMsg}`
       );
       return 0;
     }
@@ -235,12 +233,10 @@ class WalletForensicsService {
 
       return { ageDays, firstSeenTimestamp: firstTxTimestamp };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(
-        {
-          error: error instanceof Error ? error.message : String(error),
-          address,
-        },
-        'Failed to get wallet age'
+        { error: errorMsg, address },
+        `Failed to get wallet age: ${errorMsg}`
       );
       return { ageDays: null, firstSeenTimestamp: null };
     }
@@ -293,12 +289,10 @@ class WalletForensicsService {
 
       return { isFunded: false, exchange: null, timestamp: null };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(
-        {
-          error: error instanceof Error ? error.message : String(error),
-          address,
-        },
-        'Failed to check CEX funding'
+        { error: errorMsg, address },
+        `Failed to check CEX funding: ${errorMsg}`
       );
       return { isFunded: false, exchange: null, timestamp: null };
     }
@@ -350,12 +344,10 @@ class WalletForensicsService {
 
       return { netflowPercentage };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(
-        {
-          error: error instanceof Error ? error.message : String(error),
-          address,
-        },
-        'Failed to analyze Polymarket activity'
+        { error: errorMsg, address },
+        `Failed to analyze Polymarket activity: ${errorMsg}`
       );
       return { netflowPercentage: 0 };
     }
@@ -408,12 +400,10 @@ class WalletForensicsService {
 
       return { uniqueProtocols: uniqueContracts.size };
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(
-        {
-          error: error instanceof Error ? error.message : String(error),
-          address,
-        },
-        'Failed to analyze protocol diversity'
+        { error: errorMsg, address },
+        `Failed to analyze protocol diversity: ${errorMsg}`
       );
       return { uniqueProtocols: 0 };
     }

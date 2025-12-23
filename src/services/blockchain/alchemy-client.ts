@@ -345,12 +345,10 @@ class AlchemyClient {
 
       return timestamp;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(
-        {
-          error: error instanceof Error ? error.message : String(error),
-          address,
-        },
-        'Failed to get first transaction'
+        { error: errorMsg, address },
+        `Failed to get first transaction: ${errorMsg}`
       );
       return null;
     }
