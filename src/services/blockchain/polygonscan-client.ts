@@ -171,10 +171,18 @@ class PolygonscanClient {
         });
 
         if (response.data.status !== '1') {
-          if (response.data.message === 'No transactions found') {
+          // Handle various "no data" responses from Polygonscan
+          if (
+            response.data.message === 'No transactions found' ||
+            response.data.message === 'NOTOK' ||
+            (Array.isArray(response.data.result) &&
+              response.data.result.length === 0)
+          ) {
             return [];
           }
-          throw new Error(`Polygonscan API error: ${response.data.message}`);
+          throw new Error(
+            `Polygonscan API error: ${response.data.message} - ${typeof response.data.result === 'string' ? response.data.result : ''}`
+          );
         }
 
         return response.data.result;
@@ -212,10 +220,18 @@ class PolygonscanClient {
         });
 
         if (response.data.status !== '1') {
-          if (response.data.message === 'No transactions found') {
+          // Handle various "no data" responses from Polygonscan
+          if (
+            response.data.message === 'No transactions found' ||
+            response.data.message === 'NOTOK' ||
+            (Array.isArray(response.data.result) &&
+              response.data.result.length === 0)
+          ) {
             return [];
           }
-          throw new Error(`Polygonscan API error: ${response.data.message}`);
+          throw new Error(
+            `Polygonscan API error: ${response.data.message} - ${typeof response.data.result === 'string' ? response.data.result : ''}`
+          );
         }
 
         return response.data.result;
