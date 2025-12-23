@@ -155,7 +155,10 @@ class WalletForensicsService {
       return fingerprint;
     } catch (error) {
       logger.error(
-        { error, address: normalizedAddress },
+        {
+          error: error instanceof Error ? error.message : String(error),
+          address: normalizedAddress,
+        },
         'Failed to analyze wallet fingerprint - returning default'
       );
 
@@ -194,7 +197,13 @@ class WalletForensicsService {
     try {
       return await alchemyClient.getTransactionCount(address);
     } catch (error) {
-      logger.error({ error, address }, 'Failed to get transaction count');
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          address,
+        },
+        'Failed to get transaction count'
+      );
       return 0;
     }
   }
@@ -226,7 +235,13 @@ class WalletForensicsService {
 
       return { ageDays, firstSeenTimestamp: firstTxTimestamp };
     } catch (error) {
-      logger.error({ error, address }, 'Failed to get wallet age');
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          address,
+        },
+        'Failed to get wallet age'
+      );
       return { ageDays: null, firstSeenTimestamp: null };
     }
   }
@@ -278,7 +293,13 @@ class WalletForensicsService {
 
       return { isFunded: false, exchange: null, timestamp: null };
     } catch (error) {
-      logger.error({ error, address }, 'Failed to check CEX funding');
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          address,
+        },
+        'Failed to check CEX funding'
+      );
       return { isFunded: false, exchange: null, timestamp: null };
     }
   }
@@ -329,7 +350,13 @@ class WalletForensicsService {
 
       return { netflowPercentage };
     } catch (error) {
-      logger.error({ error, address }, 'Failed to analyze Polymarket activity');
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          address,
+        },
+        'Failed to analyze Polymarket activity'
+      );
       return { netflowPercentage: 0 };
     }
   }
@@ -381,7 +408,13 @@ class WalletForensicsService {
 
       return { uniqueProtocols: uniqueContracts.size };
     } catch (error) {
-      logger.error({ error, address }, 'Failed to analyze protocol diversity');
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          address,
+        },
+        'Failed to analyze protocol diversity'
+      );
       return { uniqueProtocols: 0 };
     }
   }
@@ -486,7 +519,10 @@ class WalletForensicsService {
       });
     } catch (error) {
       logger.error(
-        { error, address: fingerprint.address },
+        {
+          error: error instanceof Error ? error.message : String(error),
+          address: fingerprint.address,
+        },
         'Failed to persist fingerprint'
       );
       // Don't throw - persistence failure shouldn't break the analysis

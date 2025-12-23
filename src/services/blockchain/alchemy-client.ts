@@ -51,6 +51,49 @@ interface AlchemyTransactionCount {
   result: string;
 }
 
+/**
+ * JSON-RPC error response
+ */
+interface JsonRpcError {
+  code: number;
+  message: string;
+  data?: unknown;
+}
+
+interface JsonRpcErrorResponse {
+  jsonrpc: string;
+  id: number;
+  error: JsonRpcError;
+}
+
+/**
+ * Check if response is a JSON-RPC error
+ */
+function isJsonRpcError(
+  data: unknown
+): data is { error: JsonRpcError; result?: undefined } {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'error' in data &&
+    typeof (data as { error?: unknown }).error === 'object'
+  );
+}
+
+/**
+ * Custom error class for Alchemy API errors
+ */
+class AlchemyApiError extends Error {
+  constructor(
+    public code: number,
+    message: string,
+    public data?: unknown
+  ) {
+    super(`Alchemy API Error ${code}: ${message}`);
+    this.name = 'AlchemyApiError';
+  }
+}
+
 interface AlchemyBlock {
   timestamp: string;
   number: string;
@@ -179,27 +222,35 @@ class AlchemyClient {
   }): Promise<AlchemyTransfer[]> {
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
-        const response = await this.client.post<AlchemyAssetTransfersResponse>(
-          '',
-          {
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'alchemy_getAssetTransfers',
-            params: [
-              {
-                fromBlock: params.fromBlock ?? '0x0',
-                toBlock: params.toBlock ?? 'latest',
-                toAddress: params.address,
-                category: params.category,
-                maxCount: params.maxCount ?? 1000,
-                withMetadata: false,
-                excludeZeroValue: true,
-              },
-            ],
-          }
-        );
+        const response = await this.client.post<
+          AlchemyAssetTransfersResponse | JsonRpcErrorResponse
+        >('', {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'alchemy_getAssetTransfers',
+          params: [
+            {
+              fromBlock: params.fromBlock ?? '0x0',
+              toBlock: params.toBlock ?? 'latest',
+              toAddress: params.address,
+              category: params.category,
+              maxCount: params.maxCount ?? 1000,
+              withMetadata: false,
+              excludeZeroValue: true,
+            },
+          ],
+        });
 
-        return response.data.result.transfers;
+        if (isJsonRpcError(response.data)) {
+          throw new AlchemyApiError(
+            response.data.error.code,
+            response.data.error.message,
+            response.data.error.data
+          );
+        }
+
+        const data = response.data as AlchemyAssetTransfersResponse;
+        return data.result.transfers;
       });
     });
   }
@@ -211,14 +262,25 @@ class AlchemyClient {
   public async getTransactionCount(address: string): Promise<number> {
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
-        const response = await this.client.post<AlchemyTransactionCount>('', {
+        const response = await this.client.post<
+          AlchemyTransactionCount | JsonRpcErrorResponse
+        >('', {
           jsonrpc: '2.0',
           id: 1,
           method: 'eth_getTransactionCount',
           params: [address, 'latest'],
         });
 
-        return parseInt(response.data.result, 16);
+        if (isJsonRpcError(response.data)) {
+          throw new AlchemyApiError(
+            response.data.error.code,
+            response.data.error.message,
+            response.data.error.data
+          );
+        }
+
+        const data = response.data as AlchemyTransactionCount;
+        return parseInt(data.result, 16);
       });
     });
   }
@@ -232,17 +294,25 @@ class AlchemyClient {
   ): Promise<AlchemyTokenBalance[]> {
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
-        const response = await this.client.post<AlchemyTokenBalancesResponse>(
-          '',
-          {
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'alchemy_getTokenBalances',
-            params: [address, 'erc20'],
-          }
-        );
+        const response = await this.client.post<
+          AlchemyTokenBalancesResponse | JsonRpcErrorResponse
+        >('', {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'alchemy_getTokenBalances',
+          params: [address, 'erc20'],
+        });
 
-        return response.data.result.tokenBalances.filter(
+        if (isJsonRpcError(response.data)) {
+          throw new AlchemyApiError(
+            response.data.error.code,
+            response.data.error.message,
+            response.data.error.data
+          );
+        }
+
+        const data = response.data as AlchemyTokenBalancesResponse;
+        return data.result.tokenBalances.filter(
           (balance) => balance.error === undefined
         );
       });
@@ -275,7 +345,13 @@ class AlchemyClient {
 
       return timestamp;
     } catch (error) {
-      logger.error({ error, address }, 'Failed to get first transaction');
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          address,
+        },
+        'Failed to get first transaction'
+      );
       return null;
     }
   }
@@ -286,14 +362,25 @@ class AlchemyClient {
   public async getBlockTimestamp(blockNumber: number): Promise<number> {
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
-        const response = await this.client.post<AlchemyBlockResponse>('', {
+        const response = await this.client.post<
+          AlchemyBlockResponse | JsonRpcErrorResponse
+        >('', {
           jsonrpc: '2.0',
           id: 1,
           method: 'eth_getBlockByNumber',
           params: [`0x${blockNumber.toString(16)}`, false],
         });
 
-        return parseInt(response.data.result.timestamp, 16) * 1000; // Convert to ms
+        if (isJsonRpcError(response.data)) {
+          throw new AlchemyApiError(
+            response.data.error.code,
+            response.data.error.message,
+            response.data.error.data
+          );
+        }
+
+        const data = response.data as AlchemyBlockResponse;
+        return parseInt(data.result.timestamp, 16) * 1000; // Convert to ms
       });
     });
   }
@@ -304,14 +391,25 @@ class AlchemyClient {
   public async getCurrentBlockNumber(): Promise<number> {
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
-        const response = await this.client.post<{ result: string }>('', {
+        const response = await this.client.post<
+          { result: string } | JsonRpcErrorResponse
+        >('', {
           jsonrpc: '2.0',
           id: 1,
           method: 'eth_blockNumber',
           params: [],
         });
 
-        return parseInt(response.data.result, 16);
+        if (isJsonRpcError(response.data)) {
+          throw new AlchemyApiError(
+            response.data.error.code,
+            response.data.error.message,
+            response.data.error.data
+          );
+        }
+
+        const data = response.data as { result: string };
+        return parseInt(data.result, 16);
       });
     });
   }
