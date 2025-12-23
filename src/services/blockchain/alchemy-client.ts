@@ -22,9 +22,13 @@ interface AlchemyTransfer {
   };
 }
 
-interface AlchemyAssetTransfersResponse {
+interface AlchemyAssetTransfersResult {
   transfers: AlchemyTransfer[];
   pageKey?: string;
+}
+
+interface AlchemyAssetTransfersResponse {
+  result: AlchemyAssetTransfersResult;
 }
 
 interface AlchemyTokenBalance {
@@ -33,10 +37,14 @@ interface AlchemyTokenBalance {
   error?: string;
 }
 
-interface AlchemyTokenBalancesResponse {
+interface AlchemyTokenBalancesResult {
   address: string;
   tokenBalances: AlchemyTokenBalance[];
   pageKey?: string;
+}
+
+interface AlchemyTokenBalancesResponse {
+  result: AlchemyTokenBalancesResult;
 }
 
 interface AlchemyTransactionCount {
@@ -191,7 +199,7 @@ class AlchemyClient {
           }
         );
 
-        return response.data.transfers;
+        return response.data.result.transfers;
       });
     });
   }
@@ -234,7 +242,7 @@ class AlchemyClient {
           }
         );
 
-        return response.data.tokenBalances.filter(
+        return response.data.result.tokenBalances.filter(
           (balance) => balance.error === undefined
         );
       });
