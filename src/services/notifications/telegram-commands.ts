@@ -3,6 +3,7 @@ import axios, { type AxiosInstance } from 'axios';
 import { getEnv } from '../../config/env.js';
 import { db } from '../database/prisma.js';
 import { marketService } from '../polymarket/market-service.js';
+import { walletForensicsService } from '../blockchain/wallet-forensics.js';
 import { logger } from '../../utils/logger.js';
 
 const env = getEnv();
@@ -213,6 +214,9 @@ class TelegramCommandHandler {
       await this.handleHelp(chatId);
     } else if (text === '/status') {
       await this.handleStatus(chatId);
+    } else if (text.startsWith('/test ')) {
+      const wallet = text.slice(6).trim();
+      await this.handleTestWallet(chatId, wallet);
     }
   }
 
@@ -440,6 +444,63 @@ class TelegramCommandHandler {
   }
 
   /**
+   * Handle /test command - test wallet forensics
+   */
+  private async handleTestWallet(
+    chatId: number,
+    wallet: string
+  ): Promise<void> {
+    if (!wallet || !wallet.startsWith('0x') || wallet.length !== 42) {
+      await this.sendMessage(
+        chatId,
+        '❌ Usage: `/test <wallet-address>`\nExample: `/test 0x1234...abcd`'
+      );
+      return;
+    }
+
+    await this.sendMessage(chatId, `⏳ Analyzing wallet \`${wallet}\`...`);
+
+    try {
+      const fingerprint = await walletForensicsService.analyzeWallet(wallet);
+
+      const flagEmojis = {
+        cexFunded: fingerprint.flags.cexFunded ? '✅' : '❌',
+        lowTxCount: fingerprint.flags.lowTxCount ? '✅' : '❌',
+        youngWallet: fingerprint.flags.youngWallet ? '✅' : '❌',
+        highPolymarketNetflow: fingerprint.flags.highPolymarketNetflow
+          ? '✅'
+          : '❌',
+        singlePurpose: fingerprint.flags.singlePurpose ? '✅' : '❌',
+      };
+
+      const suspiciousCount = Object.values(fingerprint.flags).filter(
+        Boolean
+      ).length;
+
+      const message =
+        `🔍 *Wallet Analysis*\n\n` +
+        `*Address:* \`${wallet}\`\n` +
+        `*Suspicious:* ${fingerprint.isSuspicious ? '🚨 YES' : '✅ NO'} (${suspiciousCount}/5 flags)\n\n` +
+        `*Flags:*\n` +
+        `${flagEmojis.cexFunded} CEX Funded${fingerprint.metadata.cexFundingSource ? ` (${fingerprint.metadata.cexFundingSource})` : ''}\n` +
+        `${flagEmojis.lowTxCount} Low Tx Count (${fingerprint.metadata.totalTransactions} txs)\n` +
+        `${flagEmojis.youngWallet} Young Wallet (${fingerprint.metadata.walletAgeDays} days)\n` +
+        `${flagEmojis.highPolymarketNetflow} High Polymarket Flow (${fingerprint.metadata.polymarketNetflowPercentage.toFixed(1)}%)\n` +
+        `${flagEmojis.singlePurpose} Single Purpose (${fingerprint.metadata.uniqueProtocolsInteracted} protocols)\n`;
+
+      await this.sendMessage(chatId, message);
+
+      logger.info(
+        { wallet, fingerprint },
+        'Wallet test completed via Telegram'
+      );
+    } catch (error) {
+      logger.error({ error, wallet }, 'Failed to test wallet');
+      await this.sendMessage(chatId, `❌ Failed to analyze wallet: ${wallet}`);
+    }
+  }
+
+  /**
    * Handle /help command
    */
   private async handleHelp(chatId: number): Promise<void> {
@@ -450,6 +511,7 @@ class TelegramCommandHandler {
       `• \`/markets\` - List monitored markets\n` +
       `• \`/remove <id>\` - Remove a market\n` +
       `• \`/status\` - Show bot status\n` +
+      `• \`/test <wallet>\` - Test wallet fingerprint\n` +
       `• \`/help\` - Show this help\n\n` +
       `*Example:*\n` +
       `\`/add maduro-out-in-2025\``;
