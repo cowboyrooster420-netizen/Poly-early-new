@@ -99,7 +99,9 @@ class WalletForensicsService {
       const flags = {
         cexFunded: cexFunding.isFunded,
         lowTxCount: txCount < thresholds.maxWalletTransactions,
-        youngWallet: walletAge.ageDays !== null && walletAge.ageDays < 90,
+        youngWallet:
+          walletAge.ageDays !== null &&
+          walletAge.ageDays < thresholds.minWalletAgeInDays,
         highPolymarketNetflow:
           polymarketActivity.netflowPercentage >=
           thresholds.minNetflowPercentage,
@@ -223,9 +225,7 @@ class WalletForensicsService {
   /**
    * Check if wallet was funded by a CEX in the last N days
    */
-  private async checkCexFunding(
-    address: string
-  ): Promise<{
+  private async checkCexFunding(address: string): Promise<{
     isFunded: boolean;
     exchange: string | null;
     timestamp: number | null;
@@ -347,6 +347,11 @@ class WalletForensicsService {
       const uniqueContracts = new Set<string>();
 
       for (const tx of transactions) {
+        // Skip contract creation transactions (no to address)
+        if (!tx.to) {
+          continue;
+        }
+
         const toAddress = tx.to.toLowerCase();
 
         // Skip if it's a Polymarket contract
@@ -486,9 +491,7 @@ class WalletForensicsService {
     timestamp: number
   ): Promise<string> {
     // Polygon block time is approximately 2 seconds
-    const currentBlock = await alchemyClient.getTransactionCount(
-      '0x0000000000000000000000000000000000000000'
-    );
+    const currentBlock = await alchemyClient.getCurrentBlockNumber();
     const blocksSince = Math.floor((Date.now() - timestamp) / 2000);
     const estimatedBlock = Math.max(0, currentBlock - blocksSince);
 
@@ -499,15 +502,7 @@ class WalletForensicsService {
    * Helper: Get block timestamp
    */
   private async getBlockTimestamp(blockNumber: number): Promise<number> {
-    // This would ideally use the Alchemy client's getBlockTimestamp method
-    // For now, approximate based on current time and block time
-    const currentBlock = await alchemyClient.getTransactionCount(
-      '0x0000000000000000000000000000000000000000'
-    );
-    const blocksDiff = currentBlock - blockNumber;
-    const timeDiff = blocksDiff * 2000; // 2 seconds per block
-
-    return Date.now() - timeDiff;
+    return alchemyClient.getBlockTimestamp(blockNumber);
   }
 }
 

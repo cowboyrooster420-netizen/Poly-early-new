@@ -275,7 +275,7 @@ class AlchemyClient {
   /**
    * Get block timestamp
    */
-  private async getBlockTimestamp(blockNumber: number): Promise<number> {
+  public async getBlockTimestamp(blockNumber: number): Promise<number> {
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
         const response = await this.client.post<AlchemyBlockResponse>('', {
@@ -286,6 +286,24 @@ class AlchemyClient {
         });
 
         return parseInt(response.data.result.timestamp, 16) * 1000; // Convert to ms
+      });
+    });
+  }
+
+  /**
+   * Get current block number
+   */
+  public async getCurrentBlockNumber(): Promise<number> {
+    return this.rateLimiter.execute(async () => {
+      return this.retryRequest(async () => {
+        const response = await this.client.post<{ result: string }>('', {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'eth_blockNumber',
+          params: [],
+        });
+
+        return parseInt(response.data.result, 16);
       });
     });
   }
