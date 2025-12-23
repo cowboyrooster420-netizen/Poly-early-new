@@ -222,6 +222,7 @@ class AlchemyClient {
   }): Promise<AlchemyTransfer[]> {
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
+        const maxCount = params.maxCount ?? 1000;
         const response = await this.client.post<
           AlchemyAssetTransfersResponse | JsonRpcErrorResponse
         >('', {
@@ -234,7 +235,7 @@ class AlchemyClient {
               toBlock: params.toBlock ?? 'latest',
               toAddress: params.address,
               category: params.category,
-              maxCount: params.maxCount ?? 1000,
+              maxCount: `0x${maxCount.toString(16)}`,
               withMetadata: false,
               excludeZeroValue: true,
             },
@@ -345,12 +346,10 @@ class AlchemyClient {
 
       return timestamp;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error(
-        {
-          error: error instanceof Error ? error.message : String(error),
-          address,
-        },
-        'Failed to get first transaction'
+        { error: errorMsg, address },
+        `Failed to get first transaction: ${errorMsg}`
       );
       return null;
     }
