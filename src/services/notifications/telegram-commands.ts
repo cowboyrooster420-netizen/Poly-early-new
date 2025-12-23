@@ -461,7 +461,11 @@ class TelegramCommandHandler {
     await this.sendMessage(chatId, `⏳ Analyzing wallet \`${wallet}\`...`);
 
     try {
-      const fingerprint = await walletForensicsService.analyzeWallet(wallet);
+      // Skip cache for test command to always get fresh data
+      const fingerprint = await walletForensicsService.analyzeWallet(
+        wallet,
+        true
+      );
 
       const flagEmojis = {
         cexFunded: fingerprint.flags.cexFunded ? '✅' : '❌',
