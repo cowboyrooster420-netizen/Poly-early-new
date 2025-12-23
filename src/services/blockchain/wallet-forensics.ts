@@ -63,21 +63,30 @@ class WalletForensicsService {
   /**
    * Analyze wallet and return fingerprint
    * Main entry point for wallet forensics
+   * @param skipCache - If true, bypass cache and do fresh analysis
    */
-  public async analyzeWallet(address: string): Promise<WalletFingerprint> {
+  public async analyzeWallet(
+    address: string,
+    skipCache = false
+  ): Promise<WalletFingerprint> {
     const normalizedAddress = address.toLowerCase();
 
-    // Check cache first
-    const cached = await this.getCachedFingerprint(normalizedAddress);
-    if (cached !== null) {
-      logger.debug(
-        { address: normalizedAddress },
-        'Wallet fingerprint cache hit'
-      );
-      return cached;
+    // Check cache first (unless skipped)
+    if (!skipCache) {
+      const cached = await this.getCachedFingerprint(normalizedAddress);
+      if (cached !== null) {
+        logger.debug(
+          { address: normalizedAddress },
+          'Wallet fingerprint cache hit'
+        );
+        return cached;
+      }
     }
 
-    logger.info({ address: normalizedAddress }, 'Analyzing wallet fingerprint');
+    logger.info(
+      { address: normalizedAddress, skipCache },
+      'Analyzing wallet fingerprint'
+    );
 
     try {
       // Run all analyses in parallel for performance
