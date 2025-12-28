@@ -1,9 +1,12 @@
 import axios, { type AxiosInstance } from 'axios';
 
 import { getEnv } from '../../config/env.js';
+import { getThresholds } from '../../config/thresholds.js';
 import { db } from '../database/prisma.js';
 import { marketService } from '../polymarket/market-service.js';
 import { walletForensicsService } from '../blockchain/wallet-forensics.js';
+import { signalDetector } from '../signals/signal-detector.js';
+import { alertScorer } from '../alerts/alert-scorer.js';
 import { logger } from '../../utils/logger.js';
 
 const env = getEnv();
@@ -217,6 +220,8 @@ class TelegramCommandHandler {
     } else if (text.startsWith('/test ')) {
       const wallet = text.slice(6).trim();
       await this.handleTestWallet(chatId, wallet);
+    } else if (text === '/stats') {
+      await this.handleStats(chatId);
     }
   }
 
@@ -505,6 +510,61 @@ class TelegramCommandHandler {
   }
 
   /**
+   * Handle /stats command - show filter funnel stats
+   */
+  private async handleStats(chatId: number): Promise<void> {
+    try {
+      const thresholds = getThresholds();
+      const signalStats = await signalDetector.getStats();
+      const scorerStats = await alertScorer.getStats();
+
+      const tradesAnalyzed = signalStats['trades_analyzed'] || 0;
+      const filteredOi = signalStats['filtered_oi_threshold'] || 0;
+      const passedOi = signalStats['passed_oi_filter'] || 0;
+      const filteredTradeSize = scorerStats['filtered_trade_size'] || 0;
+      const filteredLowOi = scorerStats['filtered_low_oi'] || 0;
+      const filteredWallet = scorerStats['filtered_wallet_score'] || 0;
+      const passedHardFilters = scorerStats['passed_hard_filters'] || 0;
+      const alertStrong =
+        scorerStats['classification_alert_strong_insider'] || 0;
+      const alertHigh =
+        scorerStats['classification_alert_high_confidence'] || 0;
+      const alertMedium =
+        scorerStats['classification_alert_medium_confidence'] || 0;
+      const logOnly = scorerStats['classification_log_only'] || 0;
+
+      const totalAlerts = alertStrong + alertHigh + alertMedium;
+
+      const message =
+        `📊 *Filter Funnel Stats*\n\n` +
+        `*Current Thresholds:*\n` +
+        `• Min OI%: ${thresholds.minOiPercentage}%\n` +
+        `• Min Trade: $1,000\n` +
+        `• Min Wallet Score: 40\n\n` +
+        `*Pipeline Stats:*\n` +
+        `• Trades analyzed: ${tradesAnalyzed.toLocaleString()}\n` +
+        `• Filtered (OI% < ${thresholds.minOiPercentage}%): ${filteredOi.toLocaleString()}\n` +
+        `• Passed OI filter: ${passedOi.toLocaleString()}\n\n` +
+        `*Hard Filters:*\n` +
+        `• Filtered (trade < $1k): ${filteredTradeSize.toLocaleString()}\n` +
+        `• Filtered (market OI < $5k): ${filteredLowOi.toLocaleString()}\n` +
+        `• Filtered (wallet score): ${filteredWallet.toLocaleString()}\n` +
+        `• Passed all filters: ${passedHardFilters.toLocaleString()}\n\n` +
+        `*Classifications:*\n` +
+        `• 🚨 Strong Insider: ${alertStrong}\n` +
+        `• 🔴 High Confidence: ${alertHigh}\n` +
+        `• 🟡 Medium Confidence: ${alertMedium}\n` +
+        `• 📝 Log Only: ${logOnly}\n\n` +
+        `*Total Alerts Sent: ${totalAlerts}*`;
+
+      await this.sendMessage(chatId, message);
+    } catch (error) {
+      logger.error({ error }, 'Failed to get stats');
+      await this.sendMessage(chatId, '❌ Failed to get stats');
+    }
+  }
+
+  /**
    * Handle /help command
    */
   private async handleHelp(chatId: number): Promise<void> {
@@ -516,6 +576,7 @@ class TelegramCommandHandler {
       `• \`/remove <id>\` - Remove a market\n` +
       `• \`/status\` - Show bot status\n` +
       `• \`/test <wallet>\` - Test wallet fingerprint\n` +
+      `• \`/stats\` - Show filter funnel stats\n` +
       `• \`/help\` - Show this help\n\n` +
       `*Example:*\n` +
       `\`/add maduro-out-in-2025\``;

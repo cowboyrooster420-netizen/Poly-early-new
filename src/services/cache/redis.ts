@@ -333,6 +333,47 @@ class RedisService {
       throw error;
     }
   }
+
+  /**
+   * Increment a hash field by amount
+   */
+  public async hincrby(
+    key: string,
+    field: string,
+    amount: number
+  ): Promise<number> {
+    const client = this.getClient();
+
+    try {
+      const value = await client.hincrby(key, field, amount);
+      return value;
+    } catch (error) {
+      logger.error({ error, key, field }, 'Redis HINCRBY failed');
+      throw error;
+    }
+  }
+
+  /**
+   * Get all fields and values in a hash
+   */
+  public async hgetall(key: string): Promise<Record<string, string>> {
+    const client = this.getClient();
+
+    try {
+      const value = await client.hgetall(key);
+      return value;
+    } catch (error) {
+      logger.error({ error, key }, 'Redis HGETALL failed');
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a key (alias for delete)
+   */
+  public async del(key: string): Promise<void> {
+    await this.delete(key);
+  }
 }
 
 // Export singleton instance
