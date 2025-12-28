@@ -10,6 +10,9 @@ import type {
   DormancyMetrics,
 } from '../../types/index.js';
 
+// Stats keys for tracking filter funnel
+const STATS_KEY = 'stats:signal_detector';
+
 /**
  * Signal detection service
  * Analyzes trades for insider signal patterns
@@ -32,6 +35,46 @@ class SignalDetector {
   }
 
   /**
+   * Increment a stat counter
+   */
+  private async incrementStat(field: string): Promise<void> {
+    try {
+      await redis.hincrby(STATS_KEY, field, 1);
+    } catch (error) {
+      // Don't let stats tracking break the main flow
+      logger.debug({ error, field }, 'Failed to increment stat');
+    }
+  }
+
+  /**
+   * Get all stats
+   */
+  public async getStats(): Promise<Record<string, number>> {
+    try {
+      const stats = await redis.hgetall(STATS_KEY);
+      const result: Record<string, number> = {};
+      for (const [key, value] of Object.entries(stats)) {
+        result[key] = parseInt(value, 10) || 0;
+      }
+      return result;
+    } catch (error) {
+      logger.error({ error }, 'Failed to get stats');
+      return {};
+    }
+  }
+
+  /**
+   * Reset stats
+   */
+  public async resetStats(): Promise<void> {
+    try {
+      await redis.del(STATS_KEY);
+    } catch (error) {
+      logger.error({ error }, 'Failed to reset stats');
+    }
+  }
+
+  /**
    * Analyze a trade for insider signals
    * Returns null if trade doesn't meet criteria
    */
@@ -41,10 +84,14 @@ class SignalDetector {
     try {
       const thresholds = getThresholds();
 
+      // Track total trades analyzed
+      await this.incrementStat('trades_analyzed');
+
       // Get market data
       const marketData = await this.getMarketData(trade.marketId);
       if (marketData === null) {
         logger.debug({ marketId: trade.marketId }, 'No market data available');
+        await this.incrementStat('filtered_no_market_data');
         return null;
       }
 
@@ -69,8 +116,12 @@ class SignalDetector {
           },
           'Trade does not meet OI threshold'
         );
+        await this.incrementStat('filtered_oi_threshold');
         return null;
       }
+
+      // Track trades that passed OI filter
+      await this.incrementStat('passed_oi_filter');
 
       // Build trade signal
       const signal: TradeSignal = {

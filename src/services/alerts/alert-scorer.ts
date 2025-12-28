@@ -3,6 +3,9 @@ import { logger } from '../../utils/logger.js';
 import type { TradeSignal } from '../../types/index.js';
 import type { WalletFingerprint } from '../blockchain/wallet-forensics.js';
 
+// Stats key for tracking
+const STATS_KEY = 'stats:alert_scorer';
+
 /**
  * Alert classification result
  */
@@ -71,6 +74,34 @@ class AlertScorerService {
   }
 
   /**
+   * Increment a stat counter
+   */
+  private async incrementStat(field: string): Promise<void> {
+    try {
+      await redis.hincrby(STATS_KEY, field, 1);
+    } catch (error) {
+      logger.debug({ error, field }, 'Failed to increment stat');
+    }
+  }
+
+  /**
+   * Get all stats
+   */
+  public async getStats(): Promise<Record<string, number>> {
+    try {
+      const stats = await redis.hgetall(STATS_KEY);
+      const result: Record<string, number> = {};
+      for (const [key, value] of Object.entries(stats)) {
+        result[key] = parseInt(value, 10) || 0;
+      }
+      return result;
+    } catch (error) {
+      logger.error({ error }, 'Failed to get stats');
+      return {};
+    }
+  }
+
+  /**
    * Calculate confidence score for an alert
    * New tiered scoring with multipliers
    */
@@ -109,7 +140,7 @@ class AlertScorerService {
     // ----------------------------------
     // 1. HARD FILTERS
     // ----------------------------------
-    const filterResult = this.applyHardFilters(
+    const filterResult = await this.applyHardFilters(
       tradeUsdValue,
       openInterest,
       walletScore100
@@ -118,6 +149,9 @@ class AlertScorerService {
     if (!filterResult.passed) {
       return this.createIgnoreResult(filterResult.reason);
     }
+
+    // Track trades that passed hard filters
+    await this.incrementStat('passed_hard_filters');
 
     // ----------------------------------
     // 2. OI SCORE WITH MULTIPLIERS
@@ -168,6 +202,9 @@ class AlertScorerService {
     // ----------------------------------
     const classification = this.classify(finalScore);
 
+    // Track classification results
+    await this.incrementStat(`classification_${classification.toLowerCase()}`);
+
     const score: AlertScore = {
       totalScore: Math.round(finalScore),
       breakdown: {
@@ -202,12 +239,13 @@ class AlertScorerService {
   /**
    * Apply hard filters - returns IGNORE if any fail
    */
-  private applyHardFilters(
+  private async applyHardFilters(
     tradeUsdValue: number,
     openInterest: number,
     walletScore: number
-  ): { passed: boolean; reason: string } {
+  ): Promise<{ passed: boolean; reason: string }> {
     if (tradeUsdValue < this.MIN_TRADE_SIZE_USD) {
+      await this.incrementStat('filtered_trade_size');
       return {
         passed: false,
         reason: `Trade size $${tradeUsdValue.toFixed(0)} < $${this.MIN_TRADE_SIZE_USD} minimum`,
@@ -215,6 +253,7 @@ class AlertScorerService {
     }
 
     if (openInterest < this.MIN_OI_USD) {
+      await this.incrementStat('filtered_low_oi');
       return {
         passed: false,
         reason: `Market OI $${openInterest.toFixed(0)} < $${this.MIN_OI_USD} minimum`,
@@ -222,6 +261,7 @@ class AlertScorerService {
     }
 
     if (walletScore < this.MIN_WALLET_SCORE) {
+      await this.incrementStat('filtered_wallet_score');
       return {
         passed: false,
         reason: `Wallet score ${walletScore.toFixed(0)} < ${this.MIN_WALLET_SCORE} minimum`,
