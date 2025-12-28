@@ -54,13 +54,25 @@ export interface ScoreInput {
 class AlertScorerService {
   private static instance: AlertScorerService | null = null;
 
-  // Hard filter thresholds
-  private readonly MIN_TRADE_SIZE_USD = 1000;
-  private readonly MIN_OI_USD = 5000;
-  private readonly MIN_WALLET_SCORE = 40; // On 0-100 scale
+  // Hard filter thresholds (configurable via env vars)
+  private readonly MIN_TRADE_SIZE_USD: number;
+  private readonly MIN_OI_USD: number;
+  private readonly MIN_WALLET_SCORE: number;
 
   private constructor() {
-    logger.info('Alert scorer service initialized (v2 - tiered scoring)');
+    // Load thresholds from env vars with defaults
+    this.MIN_TRADE_SIZE_USD = Number(process.env['MIN_TRADE_SIZE_USD']) || 1000;
+    this.MIN_OI_USD = Number(process.env['MIN_OI_USD']) || 5000;
+    this.MIN_WALLET_SCORE = Number(process.env['MIN_WALLET_SCORE']) || 40;
+
+    logger.info(
+      {
+        minTradeSize: this.MIN_TRADE_SIZE_USD,
+        minOi: this.MIN_OI_USD,
+        minWalletScore: this.MIN_WALLET_SCORE,
+      },
+      'Alert scorer service initialized (v2 - tiered scoring)'
+    );
   }
 
   /**
