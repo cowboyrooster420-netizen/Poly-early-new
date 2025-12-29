@@ -235,14 +235,33 @@ class AlertScorerService {
       filtersPassed: true,
     };
 
-    logger.debug(
+    // Log detailed scoring breakdown for visibility
+    logger.info(
       {
+        wallet: tradeSignal.walletAddress.slice(0, 10) + '...',
+        tradeUsd: tradeUsdValue.toFixed(0),
+        marketId: tradeSignal.marketId.slice(0, 8),
         totalScore: score.totalScore,
-        breakdown: score.breakdown,
-        multipliers: score.multipliers,
         classification,
+        walletFlags: {
+          lowTxCount: walletFingerprint.flags.lowTxCount,
+          youngWallet: walletFingerprint.flags.youngWallet,
+          highPolymarketNetflow: walletFingerprint.flags.highPolymarketNetflow,
+          singlePurpose: walletFingerprint.flags.singlePurpose,
+          cexFunded: walletFingerprint.flags.cexFunded,
+        },
+        scores: {
+          walletRaw: Math.round(walletScore100 / 2), // 0-50 scale
+          walletScaled: Math.round(walletScore100), // 0-100 scale
+          walletContrib: Math.round(walletContribution),
+          oiScore: Math.round(oiScore),
+          oiContrib: Math.round(oiContribution),
+          extremity: Math.round(extremityScore),
+          extremityContrib: Math.round(extremityContribution),
+        },
+        multipliers: score.multipliers,
       },
-      'Alert score calculated (v2)'
+      '📊 Score breakdown'
     );
 
     return score;
