@@ -127,11 +127,22 @@ class TelegramCommandHandler {
           );
           return;
         }
-        const errorMsg = axios.isAxiosError(err)
-          ? `${err.message} - ${err.response?.status} - ${JSON.stringify(err.response?.data)}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
+        let errorMsg: string;
+        if (axios.isAxiosError(err)) {
+          if (err.response) {
+            // Server responded with error status
+            errorMsg = `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`;
+          } else if (err.request) {
+            // Request made but no response (network error)
+            errorMsg = `Network error: ${err.code || 'unknown'} - ${err.message}`;
+          } else {
+            errorMsg = `Request setup error: ${err.message}`;
+          }
+        } else if (err instanceof Error) {
+          errorMsg = `${err.name}: ${err.message}`;
+        } else {
+          errorMsg = String(err);
+        }
         logger.error({ error: errorMsg }, 'Error polling Telegram updates');
       })
       .finally(() => {
