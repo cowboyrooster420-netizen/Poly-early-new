@@ -140,8 +140,10 @@ class TradeService {
     try {
       const prisma = db.getClient();
 
-      await prisma.trade.create({
-        data: {
+      // Use upsert to silently handle duplicates without throwing
+      await prisma.trade.upsert({
+        where: { id: trade.id },
+        create: {
           id: trade.id,
           marketId: trade.marketId,
           side: trade.side,
@@ -152,20 +154,12 @@ class TradeService {
           taker: trade.taker,
           timestamp: new Date(trade.timestamp),
         },
+        update: {}, // No-op if already exists
       });
 
       logger.debug({ tradeId: trade.id }, 'Trade stored to database');
     } catch (error) {
-      // Check if it's a duplicate key error (trade already exists)
-      if (
-        error instanceof Error &&
-        error.message.includes('Unique constraint')
-      ) {
-        logger.debug({ tradeId: trade.id }, 'Trade already exists in database');
-        return;
-      }
-
-      throw error;
+      logger.error({ error, tradeId: trade.id }, 'Failed to store trade');
     }
   }
 

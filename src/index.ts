@@ -2,6 +2,23 @@ import 'dotenv/config';
 
 console.log('[STARTUP] Application starting...');
 
+// Test Telegram connectivity at startup (before axios)
+import https from 'https';
+const tgToken = process.env['TELEGRAM_BOT_TOKEN'];
+if (tgToken) {
+  console.log('[STARTUP] Testing Telegram connectivity...');
+  https
+    .get(`https://api.telegram.org/bot${tgToken}/getMe`, (res) => {
+      console.log('[STARTUP] TG STATUS:', res.statusCode);
+      let data = '';
+      res.on('data', (chunk) => (data += chunk));
+      res.on('end', () => console.log('[STARTUP] TG BODY:', data));
+    })
+    .on('error', (err) => {
+      console.error('[STARTUP] TG ERROR:', err.message);
+    });
+}
+
 import Fastify from 'fastify';
 
 import { registerHealthRoutes } from './api/health.js';
@@ -162,20 +179,16 @@ async function main(): Promise<void> {
 
   // Run initial refresh after 30 seconds
   setTimeout(() => {
-    marketService
-      .refreshOpenInterest()
-      .catch((err) => {
-        logger.error({ error: err }, 'Failed initial OI refresh');
-      });
+    marketService.refreshOpenInterest().catch((err) => {
+      logger.error({ error: err }, 'Failed initial OI refresh');
+    });
   }, 30000);
 
   // Then refresh every 10 minutes
   setInterval(() => {
-    marketService
-      .refreshOpenInterest()
-      .catch((err) => {
-        logger.error({ error: err }, 'Failed periodic OI refresh');
-      });
+    marketService.refreshOpenInterest().catch((err) => {
+      logger.error({ error: err }, 'Failed periodic OI refresh');
+    });
   }, TEN_MINUTES);
   logger.info('📊 OI refresh scheduled (every 10 minutes)');
 
@@ -229,8 +242,12 @@ async function main(): Promise<void> {
     // Try to send Telegram notification before dying
     if (telegramNotifier.isConfigured()) {
       telegramNotifier
-        .sendMessage(`💀 BOT CRASHED!\n\nError: ${error.message}\n\nStack: ${error.stack?.slice(0, 500) || 'N/A'}`)
-        .catch(() => { /* ignore */ })
+        .sendMessage(
+          `💀 BOT CRASHED!\n\nError: ${error.message}\n\nStack: ${error.stack?.slice(0, 500) || 'N/A'}`
+        )
+        .catch(() => {
+          /* ignore */
+        })
         .finally(() => {
           process.exit(1);
         });
@@ -242,7 +259,8 @@ async function main(): Promise<void> {
   });
 
   process.on('unhandledRejection', (reason: unknown) => {
-    const errorMessage = reason instanceof Error ? reason.message : String(reason);
+    const errorMessage =
+      reason instanceof Error ? reason.message : String(reason);
     const errorStack = reason instanceof Error ? reason.stack : 'N/A';
 
     logger.fatal(
@@ -257,8 +275,12 @@ async function main(): Promise<void> {
     // Try to send Telegram notification before dying
     if (telegramNotifier.isConfigured()) {
       telegramNotifier
-        .sendMessage(`💀 BOT CRASHED!\n\nUnhandled Rejection: ${errorMessage}\n\nStack: ${String(errorStack).slice(0, 500)}`)
-        .catch(() => { /* ignore */ })
+        .sendMessage(
+          `💀 BOT CRASHED!\n\nUnhandled Rejection: ${errorMessage}\n\nStack: ${String(errorStack).slice(0, 500)}`
+        )
+        .catch(() => {
+          /* ignore */
+        })
         .finally(() => {
           process.exit(1);
         });
