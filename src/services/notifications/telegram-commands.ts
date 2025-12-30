@@ -60,6 +60,8 @@ class TelegramCommandHandler {
   private isRunning = false;
   private pollInterval: NodeJS.Timeout | null = null;
   private startupTimeout: NodeJS.Timeout | null = null;
+  private consecutiveErrors = 0;
+  private lastErrorLogTime = 0;
 
   private constructor() {
     this.botToken = env.TELEGRAM_BOT_TOKEN ?? null;
@@ -68,7 +70,7 @@ class TelegramCommandHandler {
     if (this.botToken !== null) {
       this.client = axios.create({
         baseURL: `https://api.telegram.org/bot${this.botToken}`,
-        timeout: 30000,
+        timeout: 60000, // 60s timeout for long polling
       });
     }
   }
@@ -119,7 +121,19 @@ class TelegramCommandHandler {
     if (!this.isRunning) return;
 
     this.pollUpdates()
+      .then(() => {
+        // Reset error counter on success
+        if (this.consecutiveErrors > 0) {
+          logger.info(
+            { previousErrors: this.consecutiveErrors },
+            'Telegram polling recovered'
+          );
+          this.consecutiveErrors = 0;
+        }
+      })
       .catch((err) => {
+        this.consecutiveErrors++;
+
         // Handle 409 conflict (another instance is polling) silently
         if (axios.isAxiosError(err) && err.response?.status === 409) {
           logger.warn(
@@ -127,23 +141,35 @@ class TelegramCommandHandler {
           );
           return;
         }
-        let errorMsg: string;
-        if (axios.isAxiosError(err)) {
-          if (err.response) {
-            // Server responded with error status
-            errorMsg = `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`;
-          } else if (err.request) {
-            // Request made but no response (network error)
-            errorMsg = `Network error: ${err.code || 'unknown'} - ${err.message}`;
+
+        // Only log every 10th error or every 60 seconds to reduce spam
+        const now = Date.now();
+        const shouldLog =
+          this.consecutiveErrors === 1 ||
+          this.consecutiveErrors % 10 === 0 ||
+          now - this.lastErrorLogTime > 60000;
+
+        if (shouldLog) {
+          this.lastErrorLogTime = now;
+          let errorMsg: string;
+          if (axios.isAxiosError(err)) {
+            if (err.response) {
+              errorMsg = `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`;
+            } else if (err.request) {
+              errorMsg = `Network error: ${err.code || 'unknown'} - ${err.message}`;
+            } else {
+              errorMsg = `Request setup error: ${err.message}`;
+            }
+          } else if (err instanceof Error) {
+            errorMsg = `${err.name}: ${err.message}`;
           } else {
-            errorMsg = `Request setup error: ${err.message}`;
+            errorMsg = String(err);
           }
-        } else if (err instanceof Error) {
-          errorMsg = `${err.name}: ${err.message}`;
-        } else {
-          errorMsg = String(err);
+          logger.warn(
+            { error: errorMsg, consecutiveErrors: this.consecutiveErrors },
+            'Telegram polling error (will retry)'
+          );
         }
-        logger.error({ error: errorMsg }, 'Error polling Telegram updates');
       })
       .finally(() => {
         // Schedule next poll after current one completes (with small delay)
