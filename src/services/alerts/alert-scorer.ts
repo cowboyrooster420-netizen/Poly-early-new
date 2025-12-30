@@ -24,10 +24,12 @@ export interface AlertScore {
   breakdown: {
     walletScore: number; // 0-100 (rescaled from 0-50)
     oiScore: number; // 0-100 (with multipliers)
-    extremityScore: number; // 0-40
-    walletContribution: number; // 50% of wallet score
-    oiContribution: number; // 35% of OI score
-    extremityContribution: number; // 15% of extremity score
+    extremityScore: number; // Raw extremity score before cap
+    extremityRaw: number; // Raw points before directionality
+    directionalityMultiplier: number; // 1.5 underdog, 0.7 favorite, 1.0 even
+    walletContribution: number; // 45% of wallet score
+    oiContribution: number; // 30% of OI score
+    extremityContribution: number; // 25% of extremity score (capped at 30)
   };
   multipliers: {
     marketSize: number; // 1.0, 1.5, or 2.0
@@ -70,8 +72,9 @@ class AlertScorerService {
         minTradeSize: this.MIN_TRADE_SIZE_USD,
         minOi: this.MIN_OI_USD,
         minWalletScore: this.MIN_WALLET_SCORE,
+        weights: { wallet: '45%', oi: '30%', extremity: '25%' },
       },
-      'Alert scorer service initialized (v2 - tiered scoring)'
+      'Alert scorer service initialized (v3 - rebalanced with directionality)'
     );
   }
 
@@ -191,20 +194,23 @@ class AlertScorerService {
     oiScore = Math.min(100, oiScore);
 
     // ----------------------------------
-    // 3. ENTRY PRICE EXTREMITY SCORE
+    // 3. ENTRY PRICE EXTREMITY SCORE (v3 - with directionality)
     // ----------------------------------
-    const extremityScore = this.calculateExtremityScore(
+    const extremityResult = this.calculateExtremityScore(
       tradeUsdValue,
       oiRatio,
-      entryProbability
+      entryProbability,
+      tradeSignal.outcome
     );
 
     // ----------------------------------
-    // 4. FINAL WEIGHTED SCORE
+    // 4. FINAL WEIGHTED SCORE (v3 - rebalanced)
+    // Weights: Wallet 45%, OI 30%, Extremity 25%
     // ----------------------------------
-    const walletContribution = 0.5 * walletScore100;
-    const oiContribution = 0.35 * oiScore;
-    const extremityContribution = 0.15 * extremityScore;
+    const walletContribution = 0.45 * walletScore100;
+    const oiContribution = 0.3 * oiScore;
+    // Cap extremity contribution at 30 points max
+    const extremityContribution = Math.min(30, 0.25 * extremityResult.final);
 
     const finalScore =
       walletContribution + oiContribution + extremityContribution;
@@ -222,7 +228,9 @@ class AlertScorerService {
       breakdown: {
         walletScore: Math.round(walletScore100),
         oiScore: Math.round(oiScore),
-        extremityScore: Math.round(extremityScore),
+        extremityScore: Math.round(extremityResult.final),
+        extremityRaw: extremityResult.raw,
+        directionalityMultiplier: extremityResult.multiplier,
         walletContribution: Math.round(walletContribution),
         oiContribution: Math.round(oiContribution),
         extremityContribution: Math.round(extremityContribution),
@@ -241,6 +249,8 @@ class AlertScorerService {
         wallet: tradeSignal.walletAddress.slice(0, 10) + '...',
         tradeUsd: tradeUsdValue.toFixed(0),
         marketId: tradeSignal.marketId.slice(0, 8),
+        outcome: tradeSignal.outcome,
+        entryProb: (entryProbability * 100).toFixed(1) + '%',
         totalScore: score.totalScore,
         classification,
         walletFlags: {
@@ -253,15 +263,17 @@ class AlertScorerService {
         scores: {
           walletRaw: Math.round(walletScore100 / 2), // 0-50 scale
           walletScaled: Math.round(walletScore100), // 0-100 scale
-          walletContrib: Math.round(walletContribution),
+          walletContrib: Math.round(walletContribution), // 45% weight
           oiScore: Math.round(oiScore),
-          oiContrib: Math.round(oiContribution),
-          extremity: Math.round(extremityScore),
-          extremityContrib: Math.round(extremityContribution),
+          oiContrib: Math.round(oiContribution), // 30% weight
+          extremityRaw: extremityResult.raw,
+          directionality: extremityResult.multiplier,
+          extremityFinal: Math.round(extremityResult.final),
+          extremityContrib: Math.round(extremityContribution), // 25% weight, capped at 30
         },
         multipliers: score.multipliers,
       },
-      '📊 Score breakdown'
+      '📊 Score breakdown (v3)'
     );
 
     return score;
@@ -389,36 +401,59 @@ class AlertScorerService {
 
   /**
    * Calculate extremity score based on entry probability
+   * Returns { raw, multiplier, final } for transparency
    */
   private calculateExtremityScore(
     tradeUsdValue: number,
     oiRatio: number,
-    entryProbability: number
-  ): number {
-    // Size gating - only score if trade is significant
-    if (tradeUsdValue < 2000 && oiRatio < 0.05) {
-      return 0;
+    entryProbability: number,
+    outcome: 'yes' | 'no'
+  ): { raw: number; multiplier: number; final: number } {
+    // Relaxed size gating - $750 OR 4% OI ratio
+    if (tradeUsdValue < 750 && oiRatio < 0.04) {
+      return { raw: 0, multiplier: 1.0, final: 0 };
     }
 
-    const p = entryProbability * 100; // Convert to percentage
+    const p = entryProbability * 100; // Convert to percentage (YES side price)
 
-    // Extreme odds scoring
-    if (p < 5 || p > 95) {
-      return 40;
-    }
-    if (p < 10 || p > 90) {
-      return 25;
-    }
-    if (p < 15 || p > 85) {
-      return 15;
+    // New extremity scoring bands
+    let rawScore = 0;
+    if (p < 2 || p > 98) {
+      rawScore = 60;
+    } else if (p < 5 || p > 95) {
+      rawScore = 45;
+    } else if (p < 10 || p > 90) {
+      rawScore = 30;
+    } else if (p < 15 || p > 85) {
+      rawScore = 15;
     }
 
-    return 0;
+    if (rawScore === 0) {
+      return { raw: 0, multiplier: 1.0, final: 0 };
+    }
+
+    // Directionality multiplier
+    // Determine the implied probability of the side they're betting on
+    const targetProb =
+      outcome === 'yes' ? entryProbability : 1 - entryProbability;
+
+    let multiplier = 1.0;
+    if (targetProb < 0.5) {
+      // Betting on underdog - more suspicious
+      multiplier = 1.5;
+    } else if (targetProb > 0.5) {
+      // Betting on favorite - less suspicious ("nothing ever happens")
+      multiplier = 0.7;
+    }
+
+    const finalScore = rawScore * multiplier;
+
+    return { raw: rawScore, multiplier, final: finalScore };
   }
 
   /**
    * Classify final score
-   * Max possible: 50 (wallet) + 35 (OI) + 6 (extremity 15% of 40) = 91
+   * Max possible: 45 (wallet) + 30 (OI) + 30 (extremity capped) = 105 (capped effectively ~100)
    */
   private classify(score: number): AlertClassification {
     if (score >= 90) return 'ALERT_STRONG_INSIDER';
@@ -438,6 +473,8 @@ class AlertScorerService {
         walletScore: 0,
         oiScore: 0,
         extremityScore: 0,
+        extremityRaw: 0,
+        directionalityMultiplier: 1.0,
         walletContribution: 0,
         oiContribution: 0,
         extremityContribution: 0,
