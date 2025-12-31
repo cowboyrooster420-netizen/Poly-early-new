@@ -301,7 +301,10 @@ class PolymarketWebSocketService {
         for (const item of parsed) {
           const book = item as PolymarketOrderBook;
           if (book.bids || book.asks) {
-            logger.debug({ market: book.market, assetId: book.asset_id }, 'Order book update');
+            logger.debug(
+              { market: book.market, assetId: book.asset_id },
+              'Order book update'
+            );
           }
         }
         return;
@@ -322,7 +325,11 @@ class PolymarketWebSocketService {
           // Price changes - these represent order book changes, not actual trades
           for (const change of msg.price_changes) {
             logger.debug(
-              { assetId: change.asset_id, price: change.price, side: change.side },
+              {
+                assetId: change.asset_id,
+                price: change.price,
+                side: change.side,
+              },
               'Price change'
             );
           }
@@ -334,7 +341,8 @@ class PolymarketWebSocketService {
         }
       }
     } catch {
-      const truncated = rawMessage.length > 200 ? rawMessage.slice(0, 200) + '...' : rawMessage;
+      const truncated =
+        rawMessage.length > 200 ? rawMessage.slice(0, 200) + '...' : rawMessage;
       logger.warn(`Non-JSON WebSocket message: ${truncated}`);
     }
   }
@@ -344,6 +352,17 @@ class PolymarketWebSocketService {
    */
   private handleTradeMessage(msg: PolymarketMessage): void {
     try {
+      // Polymarket sends maker/taker OR maker_address/taker_address depending on event type
+      const rawMsg = msg as Record<string, unknown>;
+      const maker =
+        (rawMsg['maker_address'] as string) ||
+        (rawMsg['maker'] as string) ||
+        '';
+      const taker =
+        (rawMsg['taker_address'] as string) ||
+        (rawMsg['taker'] as string) ||
+        '';
+
       // Convert Polymarket message to our trade format
       const trade: PolymarketTrade = {
         id: `${msg.asset_id || msg.market}-${msg.timestamp || Date.now()}`,
@@ -352,10 +371,18 @@ class PolymarketWebSocketService {
         size: msg.size || '0',
         price: msg.price || '0',
         timestamp: msg.timestamp ? parseInt(msg.timestamp, 10) : Date.now(),
-        maker: msg.maker_address || '',
-        taker: msg.taker_address || '',
+        maker,
+        taker,
         outcome: 'yes', // Will be determined by asset_id mapping
       };
+
+      // Log if taker is missing - this helps debug the issue
+      if (!taker) {
+        logger.warn(
+          { rawFields: Object.keys(rawMsg), assetId: msg.asset_id },
+          'Trade missing taker address'
+        );
+      }
 
       logger.info(
         {
@@ -363,6 +390,7 @@ class PolymarketWebSocketService {
           size: trade.size,
           price: trade.price,
           side: trade.side,
+          hasTaker: !!taker,
         },
         'Trade event received'
       );

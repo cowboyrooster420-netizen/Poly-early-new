@@ -105,8 +105,17 @@ class TelegramNotifierService {
   private buildAlertMessage(alert: AlertData): string {
     const emoji = this.getEmojiForClassification(alert.classification);
     const polymarketUrl = `https://polymarket.com/event/${alert.marketSlug}`;
-    const walletShort = `${alert.walletAddress.substring(0, 6)}...${alert.walletAddress.substring(38)}`;
-    const polygonscanUrl = `https://polygonscan.com/address/${alert.walletAddress}`;
+
+    // Handle empty/missing wallet address
+    const walletAddr =
+      alert.walletAddress || alert.walletFingerprint.address || '';
+    const walletShort =
+      walletAddr.length >= 42
+        ? `${walletAddr.substring(0, 6)}...${walletAddr.substring(38)}`
+        : walletAddr || 'Unknown';
+    const polygonscanUrl = walletAddr
+      ? `https://polygonscan.com/address/${walletAddr}`
+      : '';
 
     // Format timestamp
     const timestamp = alert.timestamp
@@ -150,7 +159,9 @@ class TelegramNotifierService {
 
     // Wallet analysis
     message += `🔍 *Wallet Analysis*\n`;
-    message += `• Address: [\`${walletShort}\`](${polygonscanUrl})\n`;
+    message += polygonscanUrl
+      ? `• Address: [\`${walletShort}\`](${polygonscanUrl})\n`
+      : `• Address: \`${walletShort}\`\n`;
     message += `• Age: ${alert.walletFingerprint.metadata.walletAgeDays} days\n`;
     message += `• Transactions: ${alert.walletFingerprint.metadata.totalTransactions}\n`;
     message += `• PM Netflow: ${alert.walletFingerprint.metadata.polymarketNetflowPercentage.toFixed(1)}%\n`;
