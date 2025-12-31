@@ -1,11 +1,12 @@
 import { slackNotifier } from './slack-notifier.js';
 import { telegramNotifier } from './telegram-notifier.js';
+import { discordNotifier } from './discord-notifier.js';
 import { logger } from '../../utils/logger.js';
 import type { AlertData } from '../alerts/alert-persistence.js';
 
 /**
  * Notification coordinator service
- * Manages sending alerts to all configured channels (Slack, Telegram)
+ * Manages sending alerts to all configured channels (Slack, Telegram, Discord)
  */
 class NotificationCoordinatorService {
   private static instance: NotificationCoordinatorService | null = null;
@@ -32,6 +33,7 @@ class NotificationCoordinatorService {
   public async sendAlert(alert: AlertData): Promise<{
     slack: boolean;
     telegram: boolean;
+    discord: boolean;
     anySuccess: boolean;
   }> {
     logger.info(
@@ -45,23 +47,28 @@ class NotificationCoordinatorService {
     );
 
     // Send to all channels in parallel
-    const [slackResult, telegramResult] = await Promise.allSettled([
-      slackNotifier.sendAlert(alert),
-      telegramNotifier.sendAlert(alert),
-    ]);
+    const [slackResult, telegramResult, discordResult] =
+      await Promise.allSettled([
+        slackNotifier.sendAlert(alert),
+        telegramNotifier.sendAlert(alert),
+        discordNotifier.sendAlert(alert),
+      ]);
 
     const slackSuccess =
       slackResult.status === 'fulfilled' && slackResult.value === true;
     const telegramSuccess =
       telegramResult.status === 'fulfilled' && telegramResult.value === true;
+    const discordSuccess =
+      discordResult.status === 'fulfilled' && discordResult.value === true;
 
-    const anySuccess = slackSuccess || telegramSuccess;
+    const anySuccess = slackSuccess || telegramSuccess || discordSuccess;
 
     if (anySuccess) {
       logger.info(
         {
           slack: slackSuccess,
           telegram: telegramSuccess,
+          discord: discordSuccess,
         },
         '✅ Alert notifications sent'
       );
@@ -70,6 +77,7 @@ class NotificationCoordinatorService {
         {
           slack: slackSuccess,
           telegram: telegramSuccess,
+          discord: discordSuccess,
         },
         '❌ Failed to send alert notifications to any channel'
       );
@@ -78,6 +86,7 @@ class NotificationCoordinatorService {
     return {
       slack: slackSuccess,
       telegram: telegramSuccess,
+      discord: discordSuccess,
       anySuccess,
     };
   }
@@ -88,23 +97,29 @@ class NotificationCoordinatorService {
   public async sendTestNotifications(): Promise<{
     slack: boolean;
     telegram: boolean;
+    discord: boolean;
   }> {
     logger.info('Sending test notifications to all channels');
 
-    const [slackResult, telegramResult] = await Promise.allSettled([
-      slackNotifier.sendTestMessage(),
-      telegramNotifier.sendTestMessage(),
-    ]);
+    const [slackResult, telegramResult, discordResult] =
+      await Promise.allSettled([
+        slackNotifier.sendTestMessage(),
+        telegramNotifier.sendTestMessage(),
+        discordNotifier.sendTestMessage(),
+      ]);
 
     const slackSuccess =
       slackResult.status === 'fulfilled' && slackResult.value === true;
     const telegramSuccess =
       telegramResult.status === 'fulfilled' && telegramResult.value === true;
+    const discordSuccess =
+      discordResult.status === 'fulfilled' && discordResult.value === true;
 
     logger.info(
       {
         slack: slackSuccess,
         telegram: telegramSuccess,
+        discord: discordSuccess,
       },
       'Test notifications completed'
     );
@@ -112,6 +127,7 @@ class NotificationCoordinatorService {
     return {
       slack: slackSuccess,
       telegram: telegramSuccess,
+      discord: discordSuccess,
     };
   }
 
@@ -121,15 +137,18 @@ class NotificationCoordinatorService {
   public getConfiguredChannels(): {
     slack: boolean;
     telegram: boolean;
+    discord: boolean;
     hasAny: boolean;
   } {
     const slack = slackNotifier.isConfigured();
     const telegram = telegramNotifier.isConfigured();
+    const discord = discordNotifier.isConfigured();
 
     return {
       slack,
       telegram,
-      hasAny: slack || telegram,
+      discord,
+      hasAny: slack || telegram || discord,
     };
   }
 
@@ -149,6 +168,7 @@ class NotificationCoordinatorService {
     const configured: string[] = [];
     if (channels.slack) configured.push('Slack');
     if (channels.telegram) configured.push('Telegram');
+    if (channels.discord) configured.push('Discord');
 
     logger.info(
       { channels: configured },

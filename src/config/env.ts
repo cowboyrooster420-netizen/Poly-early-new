@@ -36,6 +36,7 @@ const envSchema = z.object({
   SLACK_WEBHOOK_URL: z.string().url().optional(),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
+  DISCORD_WEBHOOK_URL: z.string().url().optional(),
 
   // Monitoring
   SENTRY_DSN: z.string().url().optional(),
@@ -63,11 +64,12 @@ export function validateEnv(): Env {
     const hasNotification =
       env.SLACK_WEBHOOK_URL !== undefined ||
       (env.TELEGRAM_BOT_TOKEN !== undefined &&
-        env.TELEGRAM_CHAT_ID !== undefined);
+        env.TELEGRAM_CHAT_ID !== undefined) ||
+      env.DISCORD_WEBHOOK_URL !== undefined;
 
     if (!hasNotification) {
       throw new Error(
-        'Production requires at least one notification channel (Slack or Telegram)'
+        'Production requires at least one notification channel (Slack, Telegram, or Discord)'
       );
     }
   }
