@@ -126,7 +126,7 @@ class TradeService {
       this.tradeCount++;
 
       // Trigger signal detection pipeline
-      await this.detectSignals(tradeWithMarketId);
+      await this.detectSignals(tradeWithMarketId, market.question, market.slug);
     } catch (error) {
       logger.error({ error, tradeId: trade.id }, 'Failed to process trade');
       // Don't throw - we don't want one bad trade to kill the stream
@@ -166,7 +166,11 @@ class TradeService {
   /**
    * Detect insider signals from trade
    */
-  private async detectSignals(trade: PolymarketTrade): Promise<void> {
+  private async detectSignals(
+    trade: PolymarketTrade,
+    marketQuestion: string,
+    marketSlug: string
+  ): Promise<void> {
     try {
       // Always update last trade timestamp for dormancy tracking
       await alertScorer.updateLastTradeTimestamp(
@@ -248,6 +252,8 @@ class TradeService {
         await alertPersistence.createAlert({
           tradeId: trade.id,
           marketId: trade.marketId,
+          marketQuestion,
+          marketSlug,
           walletAddress: trade.taker,
           tradeSize: trade.size,
           tradePrice: trade.price,

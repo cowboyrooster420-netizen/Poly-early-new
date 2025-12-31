@@ -104,7 +104,7 @@ class TelegramNotifierService {
    */
   private buildAlertMessage(alert: AlertData): string {
     const emoji = this.getEmojiForClassification(alert.classification);
-    const polymarketUrl = `https://polymarket.com/event/${alert.marketId}`;
+    const polymarketUrl = `https://polymarket.com/event/${alert.marketSlug}`;
     const walletShort = `${alert.walletAddress.substring(0, 6)}...${alert.walletAddress.substring(38)}`;
     const polygonscanUrl = `https://polygonscan.com/address/${alert.walletAddress}`;
 
@@ -119,17 +119,28 @@ class TelegramNotifierService {
       alert.classification
     );
 
+    // Truncate market question if too long
+    const maxQuestionLen = 80;
+    const displayQuestion =
+      alert.marketQuestion.length > maxQuestionLen
+        ? alert.marketQuestion.substring(0, maxQuestionLen) + '...'
+        : alert.marketQuestion;
+
     // Build message
     let message = `${emoji} *INSIDER SIGNAL DETECTED*\n`;
     message += `Score: *${alert.confidenceScore}/100* (${classificationDisplay})\n\n`;
+
+    // Market info
+    message += `🎯 *Market*\n`;
+    message += `${displayQuestion}\n`;
+    message += `[View on Polymarket](${polymarketUrl})\n\n`;
 
     // Trade details
     message += `📊 *Trade Details*\n`;
     message += `• Size: $${parseFloat(alert.tradeSize).toLocaleString()}\n`;
     message += `• Side: ${alert.tradeSide}\n`;
     message += `• Price: ${(parseFloat(alert.tradePrice) * 100).toFixed(1)}¢\n`;
-    message += `• Time: ${timestamp} UTC\n`;
-    message += `• [View Market](${polymarketUrl})\n\n`;
+    message += `• Time: ${timestamp} UTC\n\n`;
 
     // Score breakdown (v2 - weighted contributions)
     message += `📈 *Score Breakdown*\n`;

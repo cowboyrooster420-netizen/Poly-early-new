@@ -106,9 +106,16 @@ class DiscordNotifierService {
     const tradeUsdValue = alert.tradeSignal.tradeUsdValue.toFixed(2);
     const oiPercentage = alert.tradeSignal.oiPercentage.toFixed(2);
 
+    // Truncate market question if too long
+    const maxQuestionLen = 100;
+    const displayQuestion =
+      alert.marketQuestion.length > maxQuestionLen
+        ? alert.marketQuestion.substring(0, maxQuestionLen) + '...'
+        : alert.marketQuestion;
+
     return {
       title: `${emoji} ${alert.classification.replace(/_/g, ' ')}`,
-      description: `**Market:** ${alert.marketId.slice(0, 16)}...`,
+      description: `**Market:** ${displayQuestion}`,
       color,
       fields: [
         {
@@ -141,7 +148,7 @@ class DiscordNotifierService {
         text: `Wallet: ${alert.walletAddress.slice(0, 10)}... | Trade ID: ${alert.tradeId.slice(0, 8)}`,
       },
       timestamp: new Date().toISOString(),
-      url: `https://polymarket.com/event/${alert.marketId}`,
+      url: `https://polymarket.com/event/${alert.marketSlug}`,
     };
   }
 

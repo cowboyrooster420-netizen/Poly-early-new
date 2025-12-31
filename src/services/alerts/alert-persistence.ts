@@ -11,6 +11,8 @@ import type { WalletFingerprint } from '../blockchain/wallet-forensics.js';
 export interface AlertData {
   tradeId: string;
   marketId: string;
+  marketQuestion: string;
+  marketSlug: string;
   walletAddress: string;
   tradeSize: string;
   tradePrice: string;
