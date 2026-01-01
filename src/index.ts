@@ -31,6 +31,7 @@ import { tradeService } from './services/polymarket/trade-service.js';
 import { polymarketWs } from './services/polymarket/websocket.js';
 import { telegramNotifier } from './services/notifications/telegram-notifier.js';
 import { telegramCommands } from './services/notifications/telegram-commands.js';
+import { cleanupService } from './services/database/cleanup-service.js';
 import { logger } from './utils/logger.js';
 
 /**
@@ -127,7 +128,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // TODO: Start background jobs (BullMQ)
+  // Start database cleanup service (prunes old trades daily)
+  cleanupService.start();
 
   // Start HTTP server
   try {
@@ -203,6 +205,9 @@ async function main(): Promise<void> {
 
       // Stop Telegram command listener
       telegramCommands.stop();
+
+      // Stop cleanup service
+      cleanupService.stop();
 
       // Close WebSocket connection
       await polymarketWs.disconnect();
