@@ -3,6 +3,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { db } from '../database/prisma.js';
 import { signalDetector } from '../signals/signal-detector.js';
 import { walletForensicsService } from '../blockchain/wallet-forensics.js';
+import { alchemyClient } from '../blockchain/alchemy-client.js';
 import { alertScorer } from '../alerts/alert-scorer.js';
 import { alertPersistence } from '../alerts/alert-persistence.js';
 import { marketService } from './market-service.js';
@@ -96,11 +97,18 @@ class TradeService {
       const outcome: 'yes' | 'no' =
         market.clobTokenIdYes === assetId ? 'yes' : 'no';
 
+      // Look up taker wallet from transaction hash if missing
+      let taker = trade.taker;
+      if (!taker && trade.transactionHash) {
+        taker = await this.lookupWalletFromTransaction(trade.transactionHash);
+      }
+
       // Create a trade object with the correct market ID for database storage
       const tradeWithMarketId: PolymarketTrade = {
         ...trade,
         marketId: market.id, // Use actual market ID from database
         outcome,
+        taker, // Use looked-up taker if original was empty
       };
 
       // Log trade details
@@ -160,6 +168,31 @@ class TradeService {
       logger.debug({ tradeId: trade.id }, 'Trade stored to database');
     } catch (error) {
       logger.error({ error, tradeId: trade.id }, 'Failed to store trade');
+    }
+  }
+
+  /**
+   * Look up wallet address from transaction hash
+   * Used when WebSocket doesn't provide taker address
+   */
+  private async lookupWalletFromTransaction(txHash: string): Promise<string> {
+    try {
+      const tx = await alchemyClient.getTransaction(txHash);
+      if (tx?.from) {
+        logger.debug(
+          { txHash: txHash.slice(0, 16), from: tx.from.slice(0, 10) },
+          'Looked up wallet from transaction'
+        );
+        return tx.from;
+      }
+      logger.warn({ txHash: txHash.slice(0, 16) }, 'Transaction not found');
+      return '';
+    } catch (error) {
+      logger.error(
+        { error, txHash: txHash.slice(0, 16) },
+        'Failed to lookup wallet from transaction'
+      );
+      return '';
     }
   }
 

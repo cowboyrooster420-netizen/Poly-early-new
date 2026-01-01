@@ -385,6 +385,41 @@ class AlchemyClient {
   }
 
   /**
+   * Get transaction by hash
+   * Used to look up wallet addresses from trade transactions
+   */
+  public async getTransaction(
+    txHash: string
+  ): Promise<{ from: string; to: string | null } | null> {
+    return this.rateLimiter.execute(async () => {
+      return this.retryRequest(async () => {
+        const response = await this.client.post<
+          | { result: { from: string; to: string | null } | null }
+          | JsonRpcErrorResponse
+        >('', {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'eth_getTransactionByHash',
+          params: [txHash],
+        });
+
+        if (isJsonRpcError(response.data)) {
+          throw new AlchemyApiError(
+            response.data.error.code,
+            response.data.error.message,
+            response.data.error.data
+          );
+        }
+
+        const data = response.data as {
+          result: { from: string; to: string | null } | null;
+        };
+        return data.result;
+      });
+    });
+  }
+
+  /**
    * Get current block number
    */
   public async getCurrentBlockNumber(): Promise<number> {

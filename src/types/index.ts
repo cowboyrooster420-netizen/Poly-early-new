@@ -30,6 +30,7 @@ export interface PolymarketTrade {
   maker: string;
   taker: string;
   outcome: 'yes' | 'no';
+  transactionHash?: string;
 }
 
 export interface OrderBook {
