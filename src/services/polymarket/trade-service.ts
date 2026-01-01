@@ -173,8 +173,8 @@ class TradeService {
 
   /**
    * Look up wallet address from transaction hash
-   * Used when WebSocket doesn't provide taker address
-   * Includes a delay to allow Alchemy to index the transaction
+   * Uses transaction receipt to parse OrderFilled events for real trader address
+   * (the tx.from is always the operator, not the actual trader)
    */
   private async lookupWalletFromTransaction(txHash: string): Promise<string> {
     try {
@@ -182,15 +182,30 @@ class TradeService {
       // Polygon blocks are ~2s, and WebSocket events arrive quickly
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      const tx = await alchemyClient.getTransaction(txHash);
-      if (tx?.from) {
-        logger.debug(
-          { txHash: txHash.slice(0, 16), from: tx.from.slice(0, 10) },
-          'Looked up wallet from transaction'
+      // Get transaction receipt with logs
+      const receipt = await alchemyClient.getTransactionReceipt(txHash);
+      if (!receipt) {
+        logger.warn(
+          { txHash: txHash.slice(0, 16) },
+          'Transaction receipt not found'
         );
-        return tx.from;
+        return '';
       }
-      logger.warn({ txHash: txHash.slice(0, 16) }, 'Transaction not found');
+
+      // Extract trader address from OrderFilled event logs
+      const traderAddress = alchemyClient.extractTraderFromReceipt(receipt);
+      if (traderAddress) {
+        logger.debug(
+          { txHash: txHash.slice(0, 16), trader: traderAddress.slice(0, 10) },
+          'Extracted trader from OrderFilled event'
+        );
+        return traderAddress;
+      }
+
+      logger.warn(
+        { txHash: txHash.slice(0, 16), logCount: receipt.logs.length },
+        'No OrderFilled event found in transaction logs'
+      );
       return '';
     } catch (error) {
       logger.error(
