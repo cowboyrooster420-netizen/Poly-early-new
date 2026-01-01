@@ -267,6 +267,8 @@ class PolymarketSubgraphClient {
             { errors: response.data.errors, address: normalizedAddress },
             'Subgraph query returned errors'
           );
+          // If there are GraphQL errors, the data might be null/undefined
+          return null;
         }
 
         const user = response.data.data.user;
@@ -329,6 +331,8 @@ class PolymarketSubgraphClient {
             { errors: response.data.errors, address: normalizedAddress },
             'Positions subgraph query returned errors'
           );
+          // If there are GraphQL errors, the data might be null/undefined
+          return null;
         }
 
         const user = response.data.data.user;
