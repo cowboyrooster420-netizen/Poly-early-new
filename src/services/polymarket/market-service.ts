@@ -75,10 +75,12 @@ class MarketService {
         }
       }
 
-      // Send the batched subscription (will be sent on WebSocket connect)
+      // Send the batched subscription
+      polymarketWs.sendSubscriptions();
+
       logger.info(
         { marketCount: markets.length, assetCount: subscribedCount },
-        'Queued markets for WebSocket subscription'
+        'Subscribed to markets via WebSocket'
       );
 
       this.isInitialized = true;
