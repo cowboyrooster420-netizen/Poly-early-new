@@ -1,5 +1,9 @@
 import { alchemyClient } from './alchemy-client.js';
 import { polygonscanClient } from './polygonscan-client.js';
+import {
+  polymarketSubgraph,
+  type SubgraphWalletData,
+} from '../polymarket/subgraph-client.js';
 import { redis } from '../cache/redis.js';
 import { db, type PrismaClient } from '../database/prisma.js';
 import { logger } from '../../utils/logger.js';
@@ -7,6 +11,18 @@ import { isCexWallet, getCexExchange } from '../../config/cex-wallets.js';
 import { getThresholds } from '../../config/thresholds.js';
 
 const thresholds = getThresholds();
+
+/**
+ * Subgraph-based flags for wallet analysis
+ * These are derived from Polymarket's official subgraph data
+ */
+export interface SubgraphFlags {
+  lowTradeCount: boolean; // Few trades on Polymarket
+  youngAccount: boolean; // Recently started trading
+  lowVolume: boolean; // Low lifetime volume
+  highConcentration: boolean; // Most value in one market
+  freshFatBet: boolean; // New wallet + large bet pattern
+}
 
 /**
  * Wallet fingerprint analysis result
@@ -21,6 +37,8 @@ export interface WalletFingerprint {
     highPolymarketNetflow: boolean;
     singlePurpose: boolean;
   };
+  // Subgraph-based flags (new - more accurate for Polymarket)
+  subgraphFlags?: SubgraphFlags;
   metadata: {
     totalTransactions: number;
     walletAgeDays: number;
@@ -29,6 +47,14 @@ export interface WalletFingerprint {
     cexFundingTimestamp: number | null;
     polymarketNetflowPercentage: number;
     uniqueProtocolsInteracted: number;
+  };
+  // Subgraph-based metadata (new)
+  subgraphMetadata?: {
+    polymarketTradeCount: number;
+    polymarketVolumeUSD: number;
+    polymarketAccountAgeDays: number | null;
+    maxPositionConcentration: number;
+    dataSource: 'subgraph' | 'on-chain' | 'hybrid';
   };
   analyzedAt: Date;
 }
@@ -39,7 +65,9 @@ export interface WalletFingerprint {
  */
 class WalletForensicsService {
   private static instance: WalletForensicsService | null = null;
-  private readonly CACHE_TTL_SECONDS = 86400; // 24 hours
+  private readonly CACHE_TTL_SECONDS = 86400; // 24 hours (on-chain cache)
+  private readonly SUBGRAPH_CACHE_TTL_SECONDS =
+    thresholds.subgraphCacheTTLHours * 3600; // Configurable subgraph cache
   private readonly POLYMARKET_CTF_ADDRESS =
     '0x4D97DCd97eC945f40cF65F87097ACe5EA0476045'.toLowerCase();
   private readonly POLYMARKET_EXCHANGE_ADDRESS =
@@ -47,7 +75,7 @@ class WalletForensicsService {
   private readonly CEX_FUNDING_WINDOW_DAYS = thresholds.cexFundingWindowDays;
 
   private constructor() {
-    logger.info('Wallet forensics service initialized');
+    logger.info('Wallet forensics service initialized with subgraph support');
   }
 
   /**
@@ -196,6 +224,317 @@ class WalletForensicsService {
       };
 
       return defaultFingerprint;
+    }
+  }
+
+  /**
+   * Analyze wallet using Polymarket subgraph data (primary method)
+   * Falls back to on-chain analysis if subgraph fails
+   * @param address - Wallet address to analyze
+   * @param tradeContext - Optional context about the triggering trade
+   */
+  public async analyzeWalletViaSubgraph(
+    address: string,
+    tradeContext?: { tradeSizeUSD: number; marketOI: number }
+  ): Promise<WalletFingerprint> {
+    const normalizedAddress = address.toLowerCase().trim();
+
+    // Guard against empty/invalid addresses
+    if (!normalizedAddress || normalizedAddress.length < 42) {
+      logger.warn(
+        { address, normalized: normalizedAddress },
+        'Invalid wallet address for subgraph analysis'
+      );
+      return this.createEmptyFingerprint(normalizedAddress);
+    }
+
+    // Check subgraph cache first
+    const cachedSubgraph =
+      await this.getCachedSubgraphFingerprint(normalizedAddress);
+    if (cachedSubgraph !== null) {
+      logger.debug(
+        { address: normalizedAddress },
+        'Subgraph fingerprint cache hit'
+      );
+      return cachedSubgraph;
+    }
+
+    logger.info(
+      { address: normalizedAddress },
+      'Analyzing wallet via subgraph'
+    );
+
+    try {
+      // Fetch data from both subgraphs
+      const subgraphData =
+        await polymarketSubgraph.getWalletData(normalizedAddress);
+
+      // If subgraph returned no data, fall back to on-chain
+      if (!subgraphData.activity && !subgraphData.positions) {
+        logger.info(
+          { address: normalizedAddress },
+          'No subgraph data found - falling back to on-chain analysis'
+        );
+        return this.analyzeWallet(normalizedAddress, true);
+      }
+
+      // Calculate subgraph-based flags
+      const subgraphFlags = this.calculateSubgraphFlags(
+        subgraphData,
+        tradeContext
+      );
+
+      // Calculate account age in days
+      let accountAgeDays: number | null = null;
+      if (subgraphData.activity?.firstTradeTimestamp) {
+        accountAgeDays = Math.floor(
+          (Date.now() - subgraphData.activity.firstTradeTimestamp) /
+            (1000 * 60 * 60 * 24)
+        );
+      }
+
+      // Count suspicious flags
+      const suspiciousFlagCount =
+        Object.values(subgraphFlags).filter(Boolean).length;
+      const isSuspicious = suspiciousFlagCount >= 2; // 2+ flags = suspicious
+
+      // Also run on-chain analysis in parallel for comparison logging
+      // This helps validate the subgraph approach during rollout
+      const onChainPromise = this.analyzeWallet(normalizedAddress, true).catch(
+        (err) => {
+          logger.warn(
+            { error: err instanceof Error ? err.message : String(err) },
+            'On-chain analysis failed during parallel scoring'
+          );
+          return null;
+        }
+      );
+
+      // Build the fingerprint with subgraph data as primary
+      const fingerprint: WalletFingerprint = {
+        address: normalizedAddress,
+        isSuspicious,
+        flags: {
+          // Map subgraph flags to legacy on-chain flags for compatibility
+          cexFunded: false, // Not available from subgraph
+          lowTxCount: subgraphFlags.lowTradeCount,
+          youngWallet: subgraphFlags.youngAccount,
+          highPolymarketNetflow: true, // By definition, all Polymarket users
+          singlePurpose: subgraphFlags.highConcentration,
+        },
+        subgraphFlags,
+        metadata: {
+          totalTransactions: subgraphData.activity?.tradeCount ?? 0,
+          walletAgeDays: accountAgeDays ?? 0,
+          firstSeenTimestamp:
+            subgraphData.activity?.firstTradeTimestamp ?? null,
+          cexFundingSource: null,
+          cexFundingTimestamp: null,
+          polymarketNetflowPercentage: 100, // Subgraph only has Polymarket data
+          uniqueProtocolsInteracted: 1, // Only Polymarket in subgraph
+        },
+        subgraphMetadata: {
+          polymarketTradeCount: subgraphData.activity?.tradeCount ?? 0,
+          polymarketVolumeUSD: subgraphData.activity?.totalVolumeUSD ?? 0,
+          polymarketAccountAgeDays: accountAgeDays,
+          maxPositionConcentration:
+            subgraphData.positions?.maxPositionPercentage ?? 0,
+          dataSource: 'subgraph',
+        },
+        analyzedAt: new Date(),
+      };
+
+      // Cache the result with subgraph TTL
+      await this.cacheSubgraphFingerprint(normalizedAddress, fingerprint);
+
+      // Log parallel scoring comparison
+      const onChainResult = await onChainPromise;
+      if (onChainResult !== null) {
+        this.logParallelScoringComparison(
+          normalizedAddress,
+          fingerprint,
+          onChainResult
+        );
+      }
+
+      logger.info(
+        {
+          address: normalizedAddress,
+          isSuspicious,
+          subgraphFlags,
+          tradeCount: subgraphData.activity?.tradeCount ?? 0,
+          volumeUSD: subgraphData.activity?.totalVolumeUSD.toFixed(2) ?? '0',
+          accountAgeDays,
+        },
+        'Subgraph wallet analysis complete'
+      );
+
+      return fingerprint;
+    } catch (error) {
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          address: normalizedAddress,
+        },
+        'Subgraph analysis failed - falling back to on-chain'
+      );
+
+      // Fall back to on-chain analysis
+      return this.analyzeWallet(normalizedAddress, true);
+    }
+  }
+
+  /**
+   * Calculate subgraph-based flags from wallet data
+   */
+  private calculateSubgraphFlags(
+    data: SubgraphWalletData,
+    tradeContext?: { tradeSizeUSD: number; marketOI: number }
+  ): SubgraphFlags {
+    const activity = data.activity;
+    const positions = data.positions;
+
+    // lowTradeCount: Wallet has fewer than threshold trades
+    const lowTradeCount =
+      (activity?.tradeCount ?? 0) <= thresholds.subgraphLowTradeCount;
+
+    // youngAccount: Wallet first trade is recent
+    let youngAccount = false;
+    if (activity?.firstTradeTimestamp) {
+      const accountAgeDays = Math.floor(
+        (Date.now() - activity.firstTradeTimestamp) / (1000 * 60 * 60 * 24)
+      );
+      youngAccount = accountAgeDays <= thresholds.subgraphYoungAccountDays;
+    } else {
+      // No first trade timestamp = likely very new account
+      youngAccount = true;
+    }
+
+    // lowVolume: Lifetime volume below threshold
+    const lowVolume =
+      (activity?.totalVolumeUSD ?? 0) <= thresholds.subgraphLowVolumeUSD;
+
+    // highConcentration: Majority of position value in one market
+    const highConcentration =
+      (positions?.maxPositionPercentage ?? 0) >=
+      thresholds.subgraphHighConcentrationPct;
+
+    // freshFatBet: New wallet making large bets (insider pattern)
+    let freshFatBet = false;
+    if (tradeContext) {
+      const priorTrades = (activity?.tradeCount ?? 0) - 1; // -1 for current trade
+      const isLargeTrade =
+        tradeContext.tradeSizeUSD >= thresholds.subgraphFreshFatBetSizeUSD;
+      const isSmallMarket =
+        tradeContext.marketOI <= thresholds.subgraphFreshFatBetMaxOI;
+      const isFreshAccount =
+        priorTrades <= thresholds.subgraphFreshFatBetPriorTrades;
+
+      freshFatBet = isLargeTrade && isSmallMarket && isFreshAccount;
+
+      if (freshFatBet) {
+        logger.info(
+          {
+            priorTrades,
+            tradeSizeUSD: tradeContext.tradeSizeUSD,
+            marketOI: tradeContext.marketOI,
+          },
+          'Fresh fat bet pattern detected'
+        );
+      }
+    }
+
+    return {
+      lowTradeCount,
+      youngAccount,
+      lowVolume,
+      highConcentration,
+      freshFatBet,
+    };
+  }
+
+  /**
+   * Log comparison between subgraph and on-chain scoring
+   * Helps validate the subgraph approach during rollout
+   */
+  private logParallelScoringComparison(
+    address: string,
+    subgraphResult: WalletFingerprint,
+    onChainResult: WalletFingerprint
+  ): void {
+    const subgraphFlagCount = subgraphResult.subgraphFlags
+      ? Object.values(subgraphResult.subgraphFlags).filter(Boolean).length
+      : 0;
+    const onChainFlagCount = Object.values(onChainResult.flags).filter(
+      Boolean
+    ).length;
+
+    const agreement =
+      subgraphResult.isSuspicious === onChainResult.isSuspicious;
+
+    logger.info(
+      {
+        address,
+        subgraph: {
+          isSuspicious: subgraphResult.isSuspicious,
+          flagCount: subgraphFlagCount,
+          flags: subgraphResult.subgraphFlags,
+          tradeCount: subgraphResult.subgraphMetadata?.polymarketTradeCount,
+          volumeUSD:
+            subgraphResult.subgraphMetadata?.polymarketVolumeUSD.toFixed(2),
+        },
+        onChain: {
+          isSuspicious: onChainResult.isSuspicious,
+          flagCount: onChainFlagCount,
+          flags: onChainResult.flags,
+          txCount: onChainResult.metadata.totalTransactions,
+        },
+        agreement,
+      },
+      `Parallel scoring comparison: ${agreement ? 'AGREE' : 'DISAGREE'}`
+    );
+  }
+
+  /**
+   * Get cached subgraph fingerprint
+   */
+  private async getCachedSubgraphFingerprint(
+    address: string
+  ): Promise<WalletFingerprint | null> {
+    try {
+      const cached = await redis.getJSON<WalletFingerprint>(
+        `wallet:subgraph:${address}`
+      );
+
+      if (cached !== null) {
+        cached.analyzedAt = new Date(cached.analyzedAt);
+      }
+
+      return cached;
+    } catch (error) {
+      logger.warn(
+        { error, address },
+        'Failed to get cached subgraph fingerprint'
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Cache subgraph fingerprint
+   */
+  private async cacheSubgraphFingerprint(
+    address: string,
+    fingerprint: WalletFingerprint
+  ): Promise<void> {
+    try {
+      await redis.setJSON(
+        `wallet:subgraph:${address}`,
+        fingerprint,
+        this.SUBGRAPH_CACHE_TTL_SECONDS
+      );
+    } catch (error) {
+      logger.warn({ error, address }, 'Failed to cache subgraph fingerprint');
     }
   }
 
