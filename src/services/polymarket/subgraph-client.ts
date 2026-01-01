@@ -305,27 +305,13 @@ class PolymarketSubgraphClient {
         // Count total trades (splits are the primary trade activity)
         const tradeCount = splits.length + merges.length;
 
-        // Debug: Log sample split data to see actual amount format
-        if (splits.length > 0 && splits[0]) {
-          const firstSplit = splits[0];
-          logger.info(
-            {
-              sampleSplit: JSON.stringify(firstSplit),
-              sampleAmount: firstSplit.amount,
-              amountType: typeof firstSplit.amount,
-              splitsCount: splits.length,
-            },
-            'Sample split data from subgraph'
-          );
-        }
-
-        // Calculate total volume (amounts are in wei, 1e18 = 1 USDC)
+        // Calculate total volume (amounts are in USDC with 6 decimals)
         const splitVolume = splits.reduce((sum, s) => {
-          const amount = parseFloat(s.amount || '0') / 1e18;
+          const amount = parseFloat(s.amount || '0') / 1e6;
           return sum + amount;
         }, 0);
         const mergeVolume = merges.reduce((sum, m) => {
-          const amount = parseFloat(m.amount || '0') / 1e18;
+          const amount = parseFloat(m.amount || '0') / 1e6;
           return sum + amount;
         }, 0);
         const totalVolumeUSD = splitVolume + mergeVolume;
@@ -343,7 +329,7 @@ class PolymarketSubgraphClient {
         // Map recent trades (from splits)
         const recentTrades = splits.slice(0, 100).map((s) => ({
           timestamp: parseInt(s.timestamp, 10) * 1000,
-          amountUSD: parseFloat(s.amount || '0') / 1e18,
+          amountUSD: parseFloat(s.amount || '0') / 1e6,
           marketId: s.condition.id || '',
           marketVolume: 0,
         }));
@@ -425,7 +411,7 @@ class PolymarketSubgraphClient {
 
         for (const split of splits) {
           const conditionId = split.condition.id || 'unknown';
-          const amount = parseFloat(split.amount || '0') / 1e18;
+          const amount = parseFloat(split.amount || '0') / 1e6;
           const current = positionsByCondition.get(conditionId) || 0;
           positionsByCondition.set(conditionId, current + amount);
           totalValueUSD += amount;
