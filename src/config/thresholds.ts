@@ -17,11 +17,21 @@ export interface DetectionThresholds {
   minWalletScore: number; // Min wallet score to trigger alert (default: 70)
   minConfidenceScore: number; // Min overall confidence to send alert (default: 75)
 
-  // Wallet fingerprint thresholds
+  // Wallet fingerprint thresholds (on-chain)
   maxWalletTransactions: number; // Max tx count for insider profile (default: 40)
   minWalletAgeInDays: number; // Max wallet age in days (default: 90)
   minNetflowPercentage: number; // Min % of netflow to Polymarket (default: 85)
   cexFundingWindowDays: number; // Days to look back for CEX funding (default: 14)
+
+  // Subgraph-based wallet thresholds (new)
+  subgraphLowTradeCount: number; // Max trades to flag as low activity (default: 10)
+  subgraphYoungAccountDays: number; // Max age in days to flag as young (default: 30)
+  subgraphLowVolumeUSD: number; // Max lifetime volume to flag as low (default: 50000)
+  subgraphHighConcentrationPct: number; // Min % in one market to flag as concentrated (default: 70)
+  subgraphFreshFatBetPriorTrades: number; // Max prior trades for fresh+fat pattern (default: 2)
+  subgraphFreshFatBetSizeUSD: number; // Min trade size for fresh+fat pattern (default: 20000)
+  subgraphFreshFatBetMaxOI: number; // Max market OI for fresh+fat pattern (default: 500000)
+  subgraphCacheTTLHours: number; // Cache TTL for subgraph data (default: 48)
 }
 
 /**
@@ -42,11 +52,21 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
   minWalletScore: 70,
   minConfidenceScore: 75,
 
-  // Wallet fingerprint
+  // Wallet fingerprint (on-chain)
   maxWalletTransactions: 40,
   minWalletAgeInDays: 90,
   minNetflowPercentage: 85,
   cexFundingWindowDays: 14,
+
+  // Subgraph-based wallet thresholds
+  subgraphLowTradeCount: 10,
+  subgraphYoungAccountDays: 30,
+  subgraphLowVolumeUSD: 50000,
+  subgraphHighConcentrationPct: 70,
+  subgraphFreshFatBetPriorTrades: 2,
+  subgraphFreshFatBetSizeUSD: 20000,
+  subgraphFreshFatBetMaxOI: 500000,
+  subgraphCacheTTLHours: 48,
 };
 
 /**
@@ -90,5 +110,30 @@ export function getThresholds(): DetectionThresholds {
     cexFundingWindowDays:
       Number(process.env['CEX_FUNDING_WINDOW_DAYS']) ||
       DEFAULT_THRESHOLDS.cexFundingWindowDays,
+    // Subgraph-based thresholds
+    subgraphLowTradeCount:
+      Number(process.env['SUBGRAPH_LOW_TRADE_COUNT']) ||
+      DEFAULT_THRESHOLDS.subgraphLowTradeCount,
+    subgraphYoungAccountDays:
+      Number(process.env['SUBGRAPH_YOUNG_ACCOUNT_DAYS']) ||
+      DEFAULT_THRESHOLDS.subgraphYoungAccountDays,
+    subgraphLowVolumeUSD:
+      Number(process.env['SUBGRAPH_LOW_VOLUME_USD']) ||
+      DEFAULT_THRESHOLDS.subgraphLowVolumeUSD,
+    subgraphHighConcentrationPct:
+      Number(process.env['SUBGRAPH_HIGH_CONCENTRATION_PCT']) ||
+      DEFAULT_THRESHOLDS.subgraphHighConcentrationPct,
+    subgraphFreshFatBetPriorTrades:
+      Number(process.env['SUBGRAPH_FRESH_FAT_BET_PRIOR_TRADES']) ||
+      DEFAULT_THRESHOLDS.subgraphFreshFatBetPriorTrades,
+    subgraphFreshFatBetSizeUSD:
+      Number(process.env['SUBGRAPH_FRESH_FAT_BET_SIZE_USD']) ||
+      DEFAULT_THRESHOLDS.subgraphFreshFatBetSizeUSD,
+    subgraphFreshFatBetMaxOI:
+      Number(process.env['SUBGRAPH_FRESH_FAT_BET_MAX_OI']) ||
+      DEFAULT_THRESHOLDS.subgraphFreshFatBetMaxOI,
+    subgraphCacheTTLHours:
+      Number(process.env['SUBGRAPH_CACHE_TTL_HOURS']) ||
+      DEFAULT_THRESHOLDS.subgraphCacheTTLHours,
   };
 }
