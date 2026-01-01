@@ -69,7 +69,16 @@ class WalletForensicsService {
     address: string,
     skipCache = false
   ): Promise<WalletFingerprint> {
-    const normalizedAddress = address.toLowerCase();
+    const normalizedAddress = address.toLowerCase().trim();
+
+    // Guard against empty/invalid addresses
+    if (!normalizedAddress || normalizedAddress.length < 42) {
+      logger.warn(
+        { address, normalized: normalizedAddress },
+        'Invalid or empty wallet address - skipping analysis'
+      );
+      return this.createEmptyFingerprint(normalizedAddress);
+    }
 
     // Check cache first (unless skipped)
     if (!skipCache) {
@@ -407,6 +416,34 @@ class WalletForensicsService {
       );
       return { uniqueProtocols: 0 };
     }
+  }
+
+  /**
+   * Create an empty fingerprint for invalid addresses
+   * Not cached - we don't want to pollute cache with bad data
+   */
+  private createEmptyFingerprint(address: string): WalletFingerprint {
+    return {
+      address: address || 'unknown',
+      isSuspicious: false,
+      flags: {
+        cexFunded: false,
+        lowTxCount: false,
+        youngWallet: false,
+        highPolymarketNetflow: false,
+        singlePurpose: false,
+      },
+      metadata: {
+        totalTransactions: 0,
+        walletAgeDays: 0,
+        firstSeenTimestamp: null,
+        cexFundingSource: null,
+        cexFundingTimestamp: null,
+        polymarketNetflowPercentage: 0,
+        uniqueProtocolsInteracted: 0,
+      },
+      analyzedAt: new Date(),
+    };
   }
 
   /**
