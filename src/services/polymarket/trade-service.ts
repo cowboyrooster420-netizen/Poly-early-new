@@ -274,20 +274,23 @@ class TradeService {
         '🎯 Trade detected - analyzing wallet'
       );
 
-      // Step 2: Analyze wallet fingerprint
-      const walletFingerprint = await walletForensicsService.analyzeWallet(
-        trade.taker
-      );
+      // Step 2: Analyze wallet fingerprint via subgraph (primary) with on-chain fallback
+      const walletFingerprint =
+        await walletForensicsService.analyzeWalletViaSubgraph(trade.taker, {
+          tradeSizeUSD: signal.tradeUsdValue,
+          marketOI: parseFloat(signal.openInterest),
+        });
 
       logger.info(
         {
           wallet: trade.taker.substring(0, 10) + '...',
           isSuspicious: walletFingerprint.isSuspicious,
-          cexFunded: walletFingerprint.flags.cexFunded,
-          lowTxCount: walletFingerprint.flags.lowTxCount,
-          youngWallet: walletFingerprint.flags.youngWallet,
-          highPolymarketNetflow: walletFingerprint.flags.highPolymarketNetflow,
-          singlePurpose: walletFingerprint.flags.singlePurpose,
+          dataSource:
+            walletFingerprint.subgraphMetadata?.dataSource ?? 'on-chain',
+          subgraphFlags: walletFingerprint.subgraphFlags,
+          tradeCount: walletFingerprint.subgraphMetadata?.polymarketTradeCount,
+          volumeUSD:
+            walletFingerprint.subgraphMetadata?.polymarketVolumeUSD.toFixed(2),
         },
         '🔍 Wallet fingerprint analyzed'
       );
