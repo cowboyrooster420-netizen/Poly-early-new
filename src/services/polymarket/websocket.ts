@@ -362,6 +362,7 @@ class PolymarketWebSocketService {
         (rawMsg['taker_address'] as string) ||
         (rawMsg['taker'] as string) ||
         '';
+      const transactionHash = (rawMsg['transaction_hash'] as string) || '';
 
       // Convert Polymarket message to our trade format
       const trade: PolymarketTrade = {
@@ -374,13 +375,14 @@ class PolymarketWebSocketService {
         maker,
         taker,
         outcome: 'yes', // Will be determined by asset_id mapping
+        ...(transactionHash ? { transactionHash } : {}),
       };
 
-      // Log if taker is missing - this helps debug the issue
-      if (!taker) {
-        logger.warn(
-          { rawFields: Object.keys(rawMsg), assetId: msg.asset_id },
-          'Trade missing taker address'
+      // Log if taker is missing but we have a transaction hash
+      if (!taker && transactionHash) {
+        logger.debug(
+          { txHash: transactionHash.slice(0, 16), assetId: msg.asset_id },
+          'Trade missing taker - will lookup from transaction'
         );
       }
 
