@@ -265,12 +265,16 @@ class WalletForensicsService {
     );
 
     try {
-      // Fetch data from both subgraphs
+      // Fetch data from all subgraphs (activity, orderbook/CLOB, positions)
       const subgraphData =
         await polymarketSubgraph.getWalletData(normalizedAddress);
 
-      // If subgraph returned no data, fall back to on-chain
-      if (!subgraphData.activity && !subgraphData.positions) {
+      // If subgraph returned no data at all, fall back to on-chain
+      if (
+        !subgraphData.activity &&
+        !subgraphData.clobActivity &&
+        !subgraphData.positions
+      ) {
         logger.info(
           { address: normalizedAddress },
           'No subgraph data found - falling back to on-chain analysis'
@@ -278,7 +282,30 @@ class WalletForensicsService {
         return this.analyzeWallet(normalizedAddress, true);
       }
 
-      // Calculate subgraph-based flags
+      // Use CLOB activity as primary source (actual trades), fall back to activity (splits)
+      // CLOB = actual buy/sell on orderbook, Activity = splits/merges (collateral operations)
+      const clobActivity = subgraphData.clobActivity;
+      const splitActivity = subgraphData.activity;
+
+      // Combined trade count: CLOB trades are the real trades, splits are supplementary
+      const clobTradeCount = clobActivity?.tradeCount ?? 0;
+      const splitTradeCount = splitActivity?.tradeCount ?? 0;
+      const combinedTradeCount = clobTradeCount + splitTradeCount;
+
+      // Combined volume
+      const clobVolumeUSD = clobActivity?.totalVolumeUSD ?? 0;
+      const splitVolumeUSD = splitActivity?.totalVolumeUSD ?? 0;
+      const combinedVolumeUSD = clobVolumeUSD + splitVolumeUSD;
+
+      // Use earliest timestamp from either source
+      const clobFirstTrade = clobActivity?.firstTradeTimestamp ?? null;
+      const splitFirstTrade = splitActivity?.firstTradeTimestamp ?? null;
+      const firstTradeTimestamp =
+        clobFirstTrade && splitFirstTrade
+          ? Math.min(clobFirstTrade, splitFirstTrade)
+          : (clobFirstTrade ?? splitFirstTrade);
+
+      // Calculate subgraph-based flags using combined data
       const subgraphFlags = this.calculateSubgraphFlags(
         subgraphData,
         tradeContext
@@ -286,10 +313,9 @@ class WalletForensicsService {
 
       // Calculate account age in days
       let accountAgeDays: number | null = null;
-      if (subgraphData.activity?.firstTradeTimestamp) {
+      if (firstTradeTimestamp) {
         accountAgeDays = Math.floor(
-          (Date.now() - subgraphData.activity.firstTradeTimestamp) /
-            (1000 * 60 * 60 * 24)
+          (Date.now() - firstTradeTimestamp) / (1000 * 60 * 60 * 24)
         );
       }
 
@@ -310,7 +336,15 @@ class WalletForensicsService {
         }
       );
 
-      // Build the fingerprint with subgraph data as primary
+      // Determine data source
+      const dataSource =
+        clobActivity && splitActivity
+          ? 'hybrid'
+          : clobActivity
+            ? 'subgraph'
+            : 'subgraph';
+
+      // Build the fingerprint with combined subgraph data
       const fingerprint: WalletFingerprint = {
         address: normalizedAddress,
         isSuspicious,
@@ -324,22 +358,21 @@ class WalletForensicsService {
         },
         subgraphFlags,
         metadata: {
-          totalTransactions: subgraphData.activity?.tradeCount ?? 0,
+          totalTransactions: combinedTradeCount,
           walletAgeDays: accountAgeDays ?? 0,
-          firstSeenTimestamp:
-            subgraphData.activity?.firstTradeTimestamp ?? null,
+          firstSeenTimestamp: firstTradeTimestamp,
           cexFundingSource: null,
           cexFundingTimestamp: null,
           polymarketNetflowPercentage: 100, // Subgraph only has Polymarket data
           uniqueProtocolsInteracted: 1, // Only Polymarket in subgraph
         },
         subgraphMetadata: {
-          polymarketTradeCount: subgraphData.activity?.tradeCount ?? 0,
-          polymarketVolumeUSD: subgraphData.activity?.totalVolumeUSD ?? 0,
+          polymarketTradeCount: combinedTradeCount,
+          polymarketVolumeUSD: combinedVolumeUSD,
           polymarketAccountAgeDays: accountAgeDays,
           maxPositionConcentration:
             subgraphData.positions?.maxPositionPercentage ?? 0,
-          dataSource: 'subgraph',
+          dataSource,
         },
         analyzedAt: new Date(),
       };
@@ -362,11 +395,16 @@ class WalletForensicsService {
           address: normalizedAddress,
           isSuspicious,
           subgraphFlags,
-          tradeCount: subgraphData.activity?.tradeCount ?? 0,
-          volumeUSD: subgraphData.activity?.totalVolumeUSD.toFixed(2) ?? '0',
+          clobTradeCount,
+          splitTradeCount,
+          combinedTradeCount,
+          clobVolumeUSD: clobVolumeUSD.toFixed(2),
+          splitVolumeUSD: splitVolumeUSD.toFixed(2),
+          combinedVolumeUSD: combinedVolumeUSD.toFixed(2),
           accountAgeDays,
+          dataSource,
         },
-        'Subgraph wallet analysis complete'
+        'Subgraph wallet analysis complete (with CLOB data)'
       );
 
       return fingerprint;
@@ -386,23 +424,40 @@ class WalletForensicsService {
 
   /**
    * Calculate subgraph-based flags from wallet data
+   * Now uses combined CLOB + activity data for accurate detection
    */
   private calculateSubgraphFlags(
     data: SubgraphWalletData,
     tradeContext?: { tradeSizeUSD: number; marketOI: number }
   ): SubgraphFlags {
-    const activity = data.activity;
+    const clobActivity = data.clobActivity;
+    const splitActivity = data.activity;
     const positions = data.positions;
 
-    // lowTradeCount: Wallet has fewer than threshold trades
+    // Combined metrics from CLOB (actual trades) + splits (collateral operations)
+    const combinedTradeCount =
+      (clobActivity?.tradeCount ?? 0) + (splitActivity?.tradeCount ?? 0);
+    const combinedVolumeUSD =
+      (clobActivity?.totalVolumeUSD ?? 0) +
+      (splitActivity?.totalVolumeUSD ?? 0);
+
+    // Use earliest timestamp from either source
+    const clobFirstTrade = clobActivity?.firstTradeTimestamp ?? null;
+    const splitFirstTrade = splitActivity?.firstTradeTimestamp ?? null;
+    const firstTradeTimestamp =
+      clobFirstTrade && splitFirstTrade
+        ? Math.min(clobFirstTrade, splitFirstTrade)
+        : (clobFirstTrade ?? splitFirstTrade);
+
+    // lowTradeCount: Wallet has fewer than threshold trades (now using combined count)
     const lowTradeCount =
-      (activity?.tradeCount ?? 0) <= thresholds.subgraphLowTradeCount;
+      combinedTradeCount <= thresholds.subgraphLowTradeCount;
 
     // youngAccount: Wallet first trade is recent
     let youngAccount = false;
-    if (activity?.firstTradeTimestamp) {
+    if (firstTradeTimestamp) {
       const accountAgeDays = Math.floor(
-        (Date.now() - activity.firstTradeTimestamp) / (1000 * 60 * 60 * 24)
+        (Date.now() - firstTradeTimestamp) / (1000 * 60 * 60 * 24)
       );
       youngAccount = accountAgeDays <= thresholds.subgraphYoungAccountDays;
     } else {
@@ -410,9 +465,8 @@ class WalletForensicsService {
       youngAccount = true;
     }
 
-    // lowVolume: Lifetime volume below threshold
-    const lowVolume =
-      (activity?.totalVolumeUSD ?? 0) <= thresholds.subgraphLowVolumeUSD;
+    // lowVolume: Lifetime volume below threshold (now using combined volume)
+    const lowVolume = combinedVolumeUSD <= thresholds.subgraphLowVolumeUSD;
 
     // highConcentration: Majority of position value in one market
     const highConcentration =
@@ -422,7 +476,7 @@ class WalletForensicsService {
     // freshFatBet: New wallet making large bets (insider pattern)
     let freshFatBet = false;
     if (tradeContext) {
-      const priorTrades = (activity?.tradeCount ?? 0) - 1; // -1 for current trade
+      const priorTrades = combinedTradeCount - 1; // -1 for current trade
       const isLargeTrade =
         tradeContext.tradeSizeUSD >= thresholds.subgraphFreshFatBetSizeUSD;
       const isSmallMarket =
@@ -436,6 +490,8 @@ class WalletForensicsService {
         logger.info(
           {
             priorTrades,
+            clobTrades: clobActivity?.tradeCount ?? 0,
+            splitTrades: splitActivity?.tradeCount ?? 0,
             tradeSizeUSD: tradeContext.tradeSizeUSD,
             marketOI: tradeContext.marketOI,
           },

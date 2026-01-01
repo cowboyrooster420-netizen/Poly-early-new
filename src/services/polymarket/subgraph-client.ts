@@ -10,6 +10,9 @@ const SUBGRAPH_ENDPOINTS = {
   positions:
     'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/positions-subgraph/0.0.7/gn',
   pnl: 'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/pnl-subgraph/0.0.14/gn',
+  // Orderbook subgraph for CLOB trades (OrderFilled/OrdersMatched events)
+  orderbook:
+    'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/orderbook-subgraph/0.0.1/gn',
 };
 
 /**
@@ -34,6 +37,31 @@ interface SubgraphRedemption {
   id: string;
   timestamp: string;
   payout: string;
+}
+
+/**
+ * OrderFilled event from Orderbook subgraph (CLOB trades)
+ */
+interface SubgraphOrderFilled {
+  id: string;
+  timestamp: string;
+  maker: string;
+  taker: string;
+  makerAssetId: string;
+  takerAssetId: string;
+  makerAmountFilled: string;
+  takerAmountFilled: string;
+  fee: string;
+}
+
+interface OrderbookQueryResponse {
+  data?: {
+    orderFilledEvents: SubgraphOrderFilled[];
+  };
+  errors?: Array<{
+    message: string;
+    locations?: Array<{ line: number; column: number }>;
+  }>;
 }
 
 interface ActivityQueryResponse {
@@ -88,10 +116,30 @@ export interface UserPositions {
 }
 
 /**
+ * CLOB (orderbook) activity from OrderFilled events
+ * This is the actual trading activity on Polymarket's order book
+ */
+export interface UserCLOBActivity {
+  address: string;
+  tradeCount: number;
+  totalVolumeUSD: number;
+  firstTradeTimestamp: number | null;
+  asMaker: number; // Times they were the maker (limit order filled)
+  asTaker: number; // Times they were the taker (market order)
+  recentTrades: Array<{
+    timestamp: number;
+    amountUSD: number;
+    side: 'maker' | 'taker';
+    assetId: string;
+  }>;
+}
+
+/**
  * Combined subgraph data for wallet analysis
  */
 export interface SubgraphWalletData {
-  activity: UserActivity | null;
+  activity: UserActivity | null; // Splits/merges (collateral operations)
+  clobActivity: UserCLOBActivity | null; // Actual CLOB trades
   positions: UserPositions | null;
   queriedAt: Date;
 }
@@ -154,6 +202,52 @@ const USER_POSITIONS_QUERY = `
       condition {
         id
       }
+    }
+  }
+`;
+
+/**
+ * GraphQL query for CLOB trades (OrderFilled events)
+ * Queries trades where the wallet was either maker or taker
+ */
+const USER_CLOB_TRADES_MAKER_QUERY = `
+  query GetUserCLOBTradesAsMaker($address: String!) {
+    orderFilledEvents(
+      where: { maker: $address }
+      orderBy: timestamp
+      orderDirection: desc
+      first: 1000
+    ) {
+      id
+      timestamp
+      maker
+      taker
+      makerAssetId
+      takerAssetId
+      makerAmountFilled
+      takerAmountFilled
+      fee
+    }
+  }
+`;
+
+const USER_CLOB_TRADES_TAKER_QUERY = `
+  query GetUserCLOBTradesAsTaker($address: String!) {
+    orderFilledEvents(
+      where: { taker: $address }
+      orderBy: timestamp
+      orderDirection: desc
+      first: 1000
+    ) {
+      id
+      timestamp
+      maker
+      taker
+      makerAssetId
+      takerAssetId
+      makerAmountFilled
+      takerAmountFilled
+      fee
     }
   }
 `;
@@ -227,6 +321,7 @@ class SubgraphRateLimiter {
 class PolymarketSubgraphClient {
   private static instance: PolymarketSubgraphClient | null = null;
   private readonly activityClient: AxiosInstance;
+  private readonly orderbookClient: AxiosInstance;
   private readonly rateLimiter: SubgraphRateLimiter;
   private readonly maxRetries = 3;
   private readonly baseRetryDelay = 500;
@@ -238,10 +333,18 @@ class PolymarketSubgraphClient {
       headers: { 'Content-Type': 'application/json' },
     });
 
+    this.orderbookClient = axios.create({
+      baseURL: SUBGRAPH_ENDPOINTS.orderbook,
+      timeout: 15000, // Slightly longer timeout for orderbook queries
+      headers: { 'Content-Type': 'application/json' },
+    });
+
     // Rate limit: 10 requests per second (conservative for public API)
     this.rateLimiter = new SubgraphRateLimiter(10);
 
-    logger.info('Polymarket subgraph client initialized');
+    logger.info(
+      'Polymarket subgraph client initialized with orderbook support'
+    );
   }
 
   public static getInstance(): PolymarketSubgraphClient {
@@ -452,20 +555,164 @@ class PolymarketSubgraphClient {
   }
 
   /**
-   * Get combined wallet data from both subgraphs
+   * Get CLOB trading activity from the orderbook subgraph
+   * This queries actual OrderFilled events (real trades on the CLOB)
+   */
+  public async getUserCLOBActivity(
+    address: string
+  ): Promise<UserCLOBActivity | null> {
+    const normalizedAddress = address.toLowerCase();
+
+    return this.rateLimiter.execute(async () => {
+      return this.retryRequest(async () => {
+        // Query both maker and taker trades in parallel
+        const [makerResponse, takerResponse] = await Promise.all([
+          this.orderbookClient.post<OrderbookQueryResponse>('', {
+            query: USER_CLOB_TRADES_MAKER_QUERY,
+            variables: { address: normalizedAddress },
+          }),
+          this.orderbookClient.post<OrderbookQueryResponse>('', {
+            query: USER_CLOB_TRADES_TAKER_QUERY,
+            variables: { address: normalizedAddress },
+          }),
+        ]);
+
+        // Check for errors
+        if (makerResponse.data.errors && makerResponse.data.errors.length > 0) {
+          logger.warn(
+            { errors: makerResponse.data.errors, address: normalizedAddress },
+            'Orderbook subgraph maker query returned errors'
+          );
+        }
+        if (takerResponse.data.errors && takerResponse.data.errors.length > 0) {
+          logger.warn(
+            { errors: takerResponse.data.errors, address: normalizedAddress },
+            'Orderbook subgraph taker query returned errors'
+          );
+        }
+
+        const makerTrades = makerResponse.data.data?.orderFilledEvents || [];
+        const takerTrades = takerResponse.data.data?.orderFilledEvents || [];
+
+        // If no CLOB activity at all, return null
+        if (makerTrades.length === 0 && takerTrades.length === 0) {
+          logger.debug(
+            { address: normalizedAddress },
+            'No CLOB activity found for user in orderbook subgraph'
+          );
+          return null;
+        }
+
+        // Deduplicate trades (same trade could appear if wallet was both maker and taker somehow)
+        const seenIds = new Set<string>();
+        const allTrades: Array<{
+          trade: SubgraphOrderFilled;
+          side: 'maker' | 'taker';
+        }> = [];
+
+        for (const trade of makerTrades) {
+          if (!seenIds.has(trade.id)) {
+            seenIds.add(trade.id);
+            allTrades.push({ trade, side: 'maker' });
+          }
+        }
+        for (const trade of takerTrades) {
+          if (!seenIds.has(trade.id)) {
+            seenIds.add(trade.id);
+            allTrades.push({ trade, side: 'taker' });
+          }
+        }
+
+        // Sort by timestamp descending
+        allTrades.sort(
+          (a, b) => parseInt(b.trade.timestamp) - parseInt(a.trade.timestamp)
+        );
+
+        // Calculate metrics
+        const tradeCount = allTrades.length;
+        const asMaker = makerTrades.length;
+        const asTaker = takerTrades.length;
+
+        // Calculate volume (takerAmountFilled is typically USDC, 6 decimals)
+        let totalVolumeUSD = 0;
+        for (const { trade } of allTrades) {
+          // Use takerAmountFilled as the trade size (usually USDC)
+          const amount = parseFloat(trade.takerAmountFilled || '0') / 1e6;
+          totalVolumeUSD += amount;
+        }
+
+        // Find earliest trade timestamp
+        const allTimestamps = allTrades
+          .map(({ trade }) => parseInt(trade.timestamp, 10))
+          .filter((t) => !isNaN(t) && t > 0);
+
+        const firstTradeTimestamp =
+          allTimestamps.length > 0 ? Math.min(...allTimestamps) * 1000 : null;
+
+        // Map recent trades
+        const recentTrades = allTrades.slice(0, 100).map(({ trade, side }) => ({
+          timestamp: parseInt(trade.timestamp, 10) * 1000,
+          amountUSD: parseFloat(trade.takerAmountFilled || '0') / 1e6,
+          side,
+          assetId: trade.makerAssetId || trade.takerAssetId || '',
+        }));
+
+        const activity: UserCLOBActivity = {
+          address: normalizedAddress,
+          tradeCount,
+          totalVolumeUSD,
+          firstTradeTimestamp,
+          asMaker,
+          asTaker,
+          recentTrades,
+        };
+
+        logger.info(
+          {
+            address: normalizedAddress,
+            clobTradeCount: activity.tradeCount,
+            clobVolume: activity.totalVolumeUSD.toFixed(2),
+            asMaker: activity.asMaker,
+            asTaker: activity.asTaker,
+          },
+          'Fetched user CLOB activity from orderbook subgraph'
+        );
+
+        return activity;
+      });
+    });
+  }
+
+  /**
+   * Get combined wallet data from all subgraphs
+   * Now includes CLOB trading activity for accurate fingerprinting
    */
   public async getWalletData(address: string): Promise<SubgraphWalletData> {
     const normalizedAddress = address.toLowerCase();
 
     try {
-      // Query both subgraphs in parallel
-      const [activity, positions] = await Promise.all([
+      // Query all subgraphs in parallel
+      const [activity, clobActivity, positions] = await Promise.all([
         this.getUserActivity(normalizedAddress),
+        this.getUserCLOBActivity(normalizedAddress),
         this.getUserPositions(normalizedAddress),
       ]);
 
+      logger.debug(
+        {
+          address: normalizedAddress,
+          hasActivityData: !!activity,
+          hasClobData: !!clobActivity,
+          hasPositions: !!positions,
+          activityTradeCount: activity?.tradeCount ?? 0,
+          clobTradeCount: clobActivity?.tradeCount ?? 0,
+        },
+        'Combined wallet data from subgraphs'
+      );
+
       return {
         activity,
+        clobActivity,
         positions,
         queriedAt: new Date(),
       };
@@ -481,6 +728,7 @@ class PolymarketSubgraphClient {
       // Return null data - caller should fall back to on-chain
       return {
         activity: null,
+        clobActivity: null,
         positions: null,
         queriedAt: new Date(),
       };
