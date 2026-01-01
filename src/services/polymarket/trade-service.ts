@@ -174,9 +174,14 @@ class TradeService {
   /**
    * Look up wallet address from transaction hash
    * Used when WebSocket doesn't provide taker address
+   * Includes a delay to allow Alchemy to index the transaction
    */
   private async lookupWalletFromTransaction(txHash: string): Promise<string> {
     try {
+      // Wait 1 second for transaction to be indexed by Alchemy
+      // Polygon blocks are ~2s, and WebSocket events arrive quickly
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
       const tx = await alchemyClient.getTransaction(txHash);
       if (tx?.from) {
         logger.debug(
