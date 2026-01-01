@@ -177,43 +177,66 @@ class TradeService {
    * (the tx.from is always the operator, not the actual trader)
    */
   private async lookupWalletFromTransaction(txHash: string): Promise<string> {
-    try {
-      // Wait 1 second for transaction to be indexed by Alchemy
-      // Polygon blocks are ~2s, and WebSocket events arrive quickly
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    const MAX_RETRIES = 3;
+    const INITIAL_DELAY_MS = 1500; // Start with 1.5s, then 3s, then 4.5s
 
-      // Get transaction receipt with logs
-      const receipt = await alchemyClient.getTransactionReceipt(txHash);
-      if (!receipt) {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        // Wait for transaction to be indexed by Alchemy
+        // Polygon blocks are ~2s, WebSocket events arrive before indexing
+        const delay = INITIAL_DELAY_MS * attempt;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+
+        // Get transaction receipt with logs
+        const receipt = await alchemyClient.getTransactionReceipt(txHash);
+        if (!receipt) {
+          if (attempt < MAX_RETRIES) {
+            logger.debug(
+              {
+                txHash: txHash.slice(0, 16),
+                attempt,
+                nextDelay: INITIAL_DELAY_MS * (attempt + 1),
+              },
+              'Transaction receipt not found, retrying...'
+            );
+            continue;
+          }
+          logger.warn(
+            { txHash: txHash.slice(0, 16), attempts: MAX_RETRIES },
+            'Transaction receipt not found after all retries'
+          );
+          return '';
+        }
+
+        // Extract trader address from OrderFilled event logs
+        const traderAddress = alchemyClient.extractTraderFromReceipt(receipt);
+        if (traderAddress) {
+          logger.debug(
+            {
+              txHash: txHash.slice(0, 16),
+              trader: traderAddress.slice(0, 10),
+              attempt,
+            },
+            'Extracted trader from OrderFilled event'
+          );
+          return traderAddress;
+        }
+
         logger.warn(
-          { txHash: txHash.slice(0, 16) },
-          'Transaction receipt not found'
+          { txHash: txHash.slice(0, 16), logCount: receipt.logs.length },
+          'No OrderFilled event found in transaction logs'
         );
         return '';
+      } catch (error) {
+        if (attempt === MAX_RETRIES) {
+          logger.error(
+            { error, txHash: txHash.slice(0, 16) },
+            'Failed to lookup wallet from transaction'
+          );
+        }
       }
-
-      // Extract trader address from OrderFilled event logs
-      const traderAddress = alchemyClient.extractTraderFromReceipt(receipt);
-      if (traderAddress) {
-        logger.debug(
-          { txHash: txHash.slice(0, 16), trader: traderAddress.slice(0, 10) },
-          'Extracted trader from OrderFilled event'
-        );
-        return traderAddress;
-      }
-
-      logger.warn(
-        { txHash: txHash.slice(0, 16), logCount: receipt.logs.length },
-        'No OrderFilled event found in transaction logs'
-      );
-      return '';
-    } catch (error) {
-      logger.error(
-        { error, txHash: txHash.slice(0, 16) },
-        'Failed to lookup wallet from transaction'
-      );
-      return '';
     }
+    return '';
   }
 
   /**
