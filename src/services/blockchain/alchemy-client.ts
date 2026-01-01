@@ -100,6 +100,22 @@ interface AlchemyBlock {
   hash: string;
 }
 
+interface TransactionLog {
+  address: string;
+  topics: string[];
+  data: string;
+  blockNumber: string;
+  transactionHash: string;
+  logIndex: string;
+}
+
+interface TransactionReceipt {
+  from: string;
+  to: string | null;
+  logs: TransactionLog[];
+  status: string;
+}
+
 interface AlchemyBlockResponse {
   result: AlchemyBlock;
 }
@@ -417,6 +433,90 @@ class AlchemyClient {
         return data.result;
       });
     });
+  }
+
+  /**
+   * Get transaction receipt with logs
+   * Used to parse OrderFilled events for real maker/taker addresses
+   */
+  public async getTransactionReceipt(
+    txHash: string
+  ): Promise<TransactionReceipt | null> {
+    return this.rateLimiter.execute(async () => {
+      return this.retryRequest(async () => {
+        const response = await this.client.post<
+          { result: TransactionReceipt | null } | JsonRpcErrorResponse
+        >('', {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'eth_getTransactionReceipt',
+          params: [txHash],
+        });
+
+        if (isJsonRpcError(response.data)) {
+          throw new AlchemyApiError(
+            response.data.error.code,
+            response.data.error.message,
+            response.data.error.data
+          );
+        }
+
+        const data = response.data as { result: TransactionReceipt | null };
+        return data.result;
+      });
+    });
+  }
+
+  /**
+   * Extract trader address from transaction receipt logs
+   * Parses OrderFilled/OrdersMatched events to get real maker/taker
+   *
+   * Polymarket CTF Exchange emits events with maker/taker as indexed params.
+   * We look for logs with address-like values in topics[2] or topics[3].
+   */
+  public extractTraderFromReceipt(receipt: TransactionReceipt): string | null {
+    // Polymarket CTF Exchange contract on Polygon
+    const CTF_EXCHANGE =
+      '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e'.toLowerCase();
+
+    for (const log of receipt.logs) {
+      // Only look at logs from the CTF Exchange
+      if (log.address.toLowerCase() !== CTF_EXCHANGE) {
+        continue;
+      }
+
+      // OrderFilled events typically have 4 topics:
+      // [0] = event signature
+      // [1] = orderHash (indexed)
+      // [2] = maker address (indexed)
+      // [3] = taker address (indexed)
+      if (log.topics.length >= 4) {
+        // Topics are 32 bytes, addresses are in the last 20 bytes
+        // Format: 0x000000000000000000000000<address>
+        const makerTopic = log.topics[2];
+        const takerTopic = log.topics[3];
+
+        if (makerTopic && takerTopic) {
+          // Extract address from topic (last 40 chars = 20 bytes)
+          const makerAddress = '0x' + makerTopic.slice(-40);
+          const takerAddress = '0x' + takerTopic.slice(-40);
+
+          // Return taker - they're the one who initiated the trade
+          // (maker is the order book order, taker is who filled it)
+          logger.debug(
+            {
+              txHash: receipt.from.slice(0, 10),
+              maker: makerAddress.slice(0, 10),
+              taker: takerAddress.slice(0, 10),
+            },
+            'Extracted trader addresses from OrderFilled event'
+          );
+          return takerAddress;
+        }
+      }
+    }
+
+    return null;
   }
 
   /**
