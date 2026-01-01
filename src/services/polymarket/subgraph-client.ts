@@ -305,6 +305,20 @@ class PolymarketSubgraphClient {
         // Count total trades (splits are the primary trade activity)
         const tradeCount = splits.length + merges.length;
 
+        // Debug: Log sample split data to see actual amount format
+        if (splits.length > 0 && splits[0]) {
+          const firstSplit = splits[0];
+          logger.info(
+            {
+              sampleSplit: JSON.stringify(firstSplit),
+              sampleAmount: firstSplit.amount,
+              amountType: typeof firstSplit.amount,
+              splitsCount: splits.length,
+            },
+            'Sample split data from subgraph'
+          );
+        }
+
         // Calculate total volume (amounts are in wei, 1e18 = 1 USDC)
         const splitVolume = splits.reduce((sum, s) => {
           const amount = parseFloat(s.amount || '0') / 1e18;
