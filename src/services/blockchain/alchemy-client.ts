@@ -273,6 +273,53 @@ class AlchemyClient {
   }
 
   /**
+   * Get outgoing asset transfers from a wallet
+   * Used to count all transactions including those where wallet is sender
+   */
+  public async getOutgoingAssetTransfers(params: {
+    address: string;
+    category: string[];
+    fromBlock?: string;
+    toBlock?: string;
+    maxCount?: number;
+  }): Promise<AlchemyTransfer[]> {
+    return this.rateLimiter.execute(async () => {
+      return this.retryRequest(async () => {
+        const maxCount = params.maxCount ?? 1000;
+        const response = await this.client.post<
+          AlchemyAssetTransfersResponse | JsonRpcErrorResponse
+        >('', {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'alchemy_getAssetTransfers',
+          params: [
+            {
+              fromBlock: params.fromBlock ?? '0x0',
+              toBlock: params.toBlock ?? 'latest',
+              fromAddress: params.address,
+              category: params.category,
+              maxCount: `0x${maxCount.toString(16)}`,
+              withMetadata: false,
+              excludeZeroValue: true,
+            },
+          ],
+        });
+
+        if (isJsonRpcError(response.data)) {
+          throw new AlchemyApiError(
+            response.data.error.code,
+            response.data.error.message,
+            response.data.error.data
+          );
+        }
+
+        const data = response.data as AlchemyAssetTransfersResponse;
+        return data.result.transfers;
+      });
+    });
+  }
+
+  /**
    * Get transaction count for a wallet
    * Used to determine wallet age and activity level
    */

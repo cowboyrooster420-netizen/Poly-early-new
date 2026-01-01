@@ -202,20 +202,34 @@ class WalletForensicsService {
   /**
    * Get transaction count for wallet
    * Uses asset transfers to count ALL transactions including internal ones
+   * Fetches both incoming and outgoing transfers
    * (eth_getTransactionCount only returns nonce - transactions SENT by wallet)
    */
   private async getTransactionCount(address: string): Promise<number> {
     try {
-      // Get all incoming transfers (includes internal txs from Polymarket trades)
-      const transfers = await alchemyClient.getAssetTransfers({
-        address,
-        category: ['external', 'internal', 'erc20'],
-        fromBlock: '0x0',
-        maxCount: 1000,
-      });
+      // Get both incoming and outgoing transfers in parallel
+      const [incomingTransfers, outgoingTransfers] = await Promise.all([
+        // Incoming transfers (to this address)
+        alchemyClient.getAssetTransfers({
+          address,
+          category: ['external', 'internal', 'erc20'],
+          fromBlock: '0x0',
+          maxCount: 1000,
+        }),
+        // Outgoing transfers (from this address)
+        alchemyClient.getOutgoingAssetTransfers({
+          address,
+          category: ['external', 'internal', 'erc20'],
+          fromBlock: '0x0',
+          maxCount: 1000,
+        }),
+      ]);
 
-      // Count unique transaction hashes
-      const uniqueTxHashes = new Set(transfers.map((t) => t.hash));
+      // Count unique transaction hashes from both directions
+      const uniqueTxHashes = new Set([
+        ...incomingTransfers.map((t) => t.hash),
+        ...outgoingTransfers.map((t) => t.hash),
+      ]);
       return uniqueTxHashes.size;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
