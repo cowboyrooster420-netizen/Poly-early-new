@@ -479,41 +479,87 @@ class AlchemyClient {
     const CTF_EXCHANGE =
       '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e'.toLowerCase();
 
+    // Collect unique contract addresses for debugging
+    const contractAddresses = new Set<string>();
+
     for (const log of receipt.logs) {
-      // Only look at logs from the CTF Exchange
-      if (log.address.toLowerCase() !== CTF_EXCHANGE) {
-        continue;
-      }
+      contractAddresses.add(log.address.toLowerCase());
 
-      // OrderFilled events typically have 4 topics:
-      // [0] = event signature
-      // [1] = orderHash (indexed)
-      // [2] = maker address (indexed)
-      // [3] = taker address (indexed)
-      if (log.topics.length >= 4) {
-        // Topics are 32 bytes, addresses are in the last 20 bytes
-        // Format: 0x000000000000000000000000<address>
-        const makerTopic = log.topics[2];
-        const takerTopic = log.topics[3];
+      // Check for CTF Exchange
+      if (log.address.toLowerCase() === CTF_EXCHANGE) {
+        // OrderFilled events typically have 4 topics:
+        // [0] = event signature
+        // [1] = orderHash (indexed)
+        // [2] = maker address (indexed)
+        // [3] = taker address (indexed)
+        if (log.topics.length >= 4) {
+          // Topics are 32 bytes, addresses are in the last 20 bytes
+          // Format: 0x000000000000000000000000<address>
+          const makerTopic = log.topics[2];
+          const takerTopic = log.topics[3];
 
-        if (makerTopic && takerTopic) {
-          // Extract address from topic (last 40 chars = 20 bytes)
-          const makerAddress = '0x' + makerTopic.slice(-40);
-          const takerAddress = '0x' + takerTopic.slice(-40);
+          if (makerTopic && takerTopic) {
+            // Extract address from topic (last 40 chars = 20 bytes)
+            const makerAddress = '0x' + makerTopic.slice(-40);
+            const takerAddress = '0x' + takerTopic.slice(-40);
 
-          // Return taker - they're the one who initiated the trade
-          // (maker is the order book order, taker is who filled it)
-          logger.debug(
-            {
-              txHash: receipt.from.slice(0, 10),
-              maker: makerAddress.slice(0, 10),
-              taker: takerAddress.slice(0, 10),
-            },
-            'Extracted trader addresses from OrderFilled event'
-          );
-          return takerAddress;
+            // Return taker - they're the one who initiated the trade
+            // (maker is the order book order, taker is who filled it)
+            logger.debug(
+              {
+                txHash: receipt.from.slice(0, 10),
+                maker: makerAddress.slice(0, 10),
+                taker: takerAddress.slice(0, 10),
+              },
+              'Extracted trader addresses from OrderFilled event'
+            );
+            return takerAddress;
+          }
         }
       }
+
+      // Also check for any log with 4+ topics that might contain addresses
+      // This catches OrderFilled events from other/newer contracts
+      if (log.topics.length >= 4) {
+        const topic2 = log.topics[2];
+        const topic3 = log.topics[3];
+
+        // Check if topics 2 and 3 look like addresses (have 12 leading zeros + 40 hex chars)
+        if (
+          topic2 &&
+          topic3 &&
+          topic2.startsWith('0x000000000000000000000000') &&
+          topic3.startsWith('0x000000000000000000000000')
+        ) {
+          const addr2 = '0x' + topic2.slice(-40);
+          const addr3 = '0x' + topic3.slice(-40);
+
+          // Skip if addresses are zero address or look invalid
+          if (
+            addr2 !== '0x0000000000000000000000000000000000000000' &&
+            addr3 !== '0x0000000000000000000000000000000000000000'
+          ) {
+            logger.debug(
+              {
+                contract: log.address.slice(0, 10),
+                topic0: log.topics[0]?.slice(0, 16),
+                maker: addr2.slice(0, 10),
+                taker: addr3.slice(0, 10),
+              },
+              'Found potential OrderFilled event from different contract'
+            );
+            return addr3; // Return taker
+          }
+        }
+      }
+    }
+
+    // Log what contracts we saw for debugging
+    if (contractAddresses.size > 0) {
+      logger.debug(
+        { contracts: Array.from(contractAddresses).map((a) => a.slice(0, 12)) },
+        'Contract addresses in transaction logs'
+      );
     }
 
     return null;
