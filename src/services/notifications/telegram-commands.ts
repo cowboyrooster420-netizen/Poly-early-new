@@ -7,6 +7,7 @@ import { marketService } from '../polymarket/market-service.js';
 import { walletForensicsService } from '../blockchain/wallet-forensics.js';
 import { signalDetector } from '../signals/signal-detector.js';
 import { alertScorer } from '../alerts/alert-scorer.js';
+import { tradeService } from '../polymarket/trade-service.js';
 import { logger } from '../../utils/logger.js';
 
 const env = getEnv();
@@ -477,14 +478,9 @@ class TelegramCommandHandler {
     try {
       const prisma = db.getClient();
 
-      // Get recent trade stats
-      const recentTrades = await prisma.trade.count({
-        where: {
-          timestamp: {
-            gte: new Date(Date.now() - 60 * 60 * 1000), // Last hour
-          },
-        },
-      });
+      // Get recent trade stats from trade service
+      const tradeStats = await tradeService.getTradeStats();
+      const recentTrades = tradeStats.lastHour;
 
       // Get recent alert stats
       const recentAlerts = await prisma.alert.count({
