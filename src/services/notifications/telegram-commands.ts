@@ -473,16 +473,75 @@ class TelegramCommandHandler {
    */
   private async handleStatus(chatId: number): Promise<void> {
     const stats = marketService.getStats();
+    const thresholds = getThresholds();
 
-    const message =
-      `🤖 *Bot Status*\n\n` +
-      `• Markets monitored: ${stats.total}\n` +
-      `• Tier 1: ${stats.tier1}\n` +
-      `• Tier 2: ${stats.tier2}\n` +
-      `• Tier 3: ${stats.tier3}\n` +
-      `• Uptime: ${Math.floor(process.uptime() / 60)} minutes`;
+    try {
+      const prisma = db.getClient();
 
-    await this.sendMessage(chatId, message);
+      // Get recent trade stats
+      const recentTrades = await prisma.trade.count({
+        where: {
+          timestamp: {
+            gte: new Date(Date.now() - 60 * 60 * 1000), // Last hour
+          },
+        },
+      });
+
+      // Get recent alert stats
+      const recentAlerts = await prisma.alert.count({
+        where: {
+          createdAt: {
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24h
+          },
+        },
+      });
+
+      // Get scoring stats
+      const scorerStats = await alertScorer.getStats();
+      const alertStrong =
+        scorerStats['classification_alert_strong_insider'] || 0;
+      const alertHigh =
+        scorerStats['classification_alert_high_confidence'] || 0;
+      const alertMedium =
+        scorerStats['classification_alert_medium_confidence'] || 0;
+      const totalAlerts = alertStrong + alertHigh + alertMedium;
+
+      const message =
+        `🤖 *Bot Status*\n\n` +
+        `*Markets:*\n` +
+        `• Total monitored: ${stats.total}\n` +
+        `• By tier: T1: ${stats.tier1}, T2: ${stats.tier2}, T3: ${stats.tier3}\n\n` +
+        `*Activity (Last Hour):*\n` +
+        `• Trades processed: ${recentTrades}\n` +
+        `• Alerts sent (24h): ${recentAlerts}\n\n` +
+        `*Scoring System:*\n` +
+        `• Alert threshold: Score ≥ ${thresholds.alertThreshold || 40}\n` +
+        `• Min trade size: $${(thresholds.minTradeSize || 250).toLocaleString()}\n` +
+        `• Min OI: $${(thresholds.minOi || 5000).toLocaleString()}\n\n` +
+        `*All-Time Alerts:*\n` +
+        `• 🚨 Strong: ${alertStrong}\n` +
+        `• 🔴 High: ${alertHigh}\n` +
+        `• 🟡 Medium: ${alertMedium}\n` +
+        `• Total: ${totalAlerts}\n\n` +
+        `*System:*\n` +
+        `• Uptime: ${Math.floor(process.uptime() / 60)} minutes\n` +
+        `• Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`;
+
+      await this.sendMessage(chatId, message);
+    } catch (error) {
+      logger.error({ error }, 'Failed to get status');
+
+      // Fallback to basic status
+      const message =
+        `🤖 *Bot Status*\n\n` +
+        `• Markets monitored: ${stats.total}\n` +
+        `• Tier 1: ${stats.tier1}\n` +
+        `• Tier 2: ${stats.tier2}\n` +
+        `• Tier 3: ${stats.tier3}\n` +
+        `• Uptime: ${Math.floor(process.uptime() / 60)} minutes`;
+
+      await this.sendMessage(chatId, message);
+    }
   }
 
   /**
