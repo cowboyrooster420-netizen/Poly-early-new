@@ -503,10 +503,10 @@ class TelegramCommandHandler {
     await this.sendMessage(chatId, `⏳ Analyzing wallet \`${wallet}\`...`);
 
     try {
-      // Skip cache for test command to always get fresh data
+      // Analyze wallet without trade context
       const fingerprint = await walletForensicsService.analyzeWallet(
-        wallet,
-        true
+        wallet
+        // No trade context for manual check
       );
 
       const flagEmojis = {

@@ -51,5 +51,5 @@ module.exports = {
     'no-var': 'error',
     eqeqeq: ['error', 'always'],
   },
-  ignorePatterns: ['dist', 'node_modules', '*.cjs', '*.js'],
+  ignorePatterns: ['dist', 'node_modules', '*.cjs', '*.js', 'src/services/blockchain/old-onchain'],
 };

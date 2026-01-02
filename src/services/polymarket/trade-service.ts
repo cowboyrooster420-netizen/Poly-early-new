@@ -3,7 +3,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { db } from '../database/prisma.js';
 import { signalDetector } from '../signals/signal-detector.js';
 import { walletForensicsService } from '../blockchain/wallet-forensics.js';
-import { alchemyClient } from '../blockchain/alchemy-client.js';
+import { polymarketSubgraph } from './subgraph-client.js';
 import { alertScorer } from '../alerts/alert-scorer.js';
 import { alertPersistence } from '../alerts/alert-persistence.js';
 import { marketService } from './market-service.js';
@@ -97,10 +97,34 @@ class TradeService {
       const outcome: 'yes' | 'no' =
         market.clobTokenIdYes === assetId ? 'yes' : 'no';
 
-      // Look up taker wallet from transaction hash if missing
+      // Resolve taker address - WebSocket gives us proxy addresses, we need actual user addresses
       let taker = trade.taker;
-      if (!taker && trade.transactionHash) {
-        taker = await this.lookupWalletFromTransaction(trade.transactionHash);
+      if (taker) {
+        // Resolve proxy wallet to actual signer (user) address
+        const signerAddress =
+          await polymarketSubgraph.getSignerFromProxy(taker);
+        if (signerAddress) {
+          logger.debug(
+            {
+              proxy: taker.substring(0, 10) + '...',
+              signer: signerAddress.substring(0, 10) + '...',
+            },
+            'Resolved proxy wallet to signer address'
+          );
+          taker = signerAddress;
+        } else {
+          // If no mapping found, this might be a direct EOA trade (rare)
+          logger.warn(
+            { proxyAddress: taker },
+            'No signer mapping found for address - using as-is'
+          );
+        }
+      } else {
+        logger.warn(
+          { tradeId: trade.id },
+          'Trade missing taker address - skipping'
+        );
+        return;
       }
 
       // Create a trade object with the correct market ID for database storage
@@ -172,74 +196,6 @@ class TradeService {
   }
 
   /**
-   * Look up wallet address from transaction hash
-   * Uses transaction receipt to parse OrderFilled events for real trader address
-   * (the tx.from is always the operator, not the actual trader)
-   */
-  private async lookupWalletFromTransaction(txHash: string): Promise<string> {
-    const MAX_RETRIES = 3;
-    const INITIAL_DELAY_MS = 1500; // Start with 1.5s, then 3s, then 4.5s
-
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        // Wait for transaction to be indexed by Alchemy
-        // Polygon blocks are ~2s, WebSocket events arrive before indexing
-        const delay = INITIAL_DELAY_MS * attempt;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-
-        // Get transaction receipt with logs
-        const receipt = await alchemyClient.getTransactionReceipt(txHash);
-        if (!receipt) {
-          if (attempt < MAX_RETRIES) {
-            logger.debug(
-              {
-                txHash: txHash.slice(0, 16),
-                attempt,
-                nextDelay: INITIAL_DELAY_MS * (attempt + 1),
-              },
-              'Transaction receipt not found, retrying...'
-            );
-            continue;
-          }
-          logger.warn(
-            { txHash: txHash.slice(0, 16), attempts: MAX_RETRIES },
-            'Transaction receipt not found after all retries'
-          );
-          return '';
-        }
-
-        // Extract trader address from OrderFilled event logs
-        const traderAddress = alchemyClient.extractTraderFromReceipt(receipt);
-        if (traderAddress) {
-          logger.debug(
-            {
-              txHash: txHash.slice(0, 16),
-              trader: traderAddress.slice(0, 10),
-              attempt,
-            },
-            'Extracted trader from OrderFilled event'
-          );
-          return traderAddress;
-        }
-
-        logger.warn(
-          { txHash: txHash.slice(0, 16), logCount: receipt.logs.length },
-          'No OrderFilled event found in transaction logs'
-        );
-        return '';
-      } catch (error) {
-        if (attempt === MAX_RETRIES) {
-          logger.error(
-            { error, txHash: txHash.slice(0, 16) },
-            'Failed to lookup wallet from transaction'
-          );
-        }
-      }
-    }
-    return '';
-  }
-
-  /**
    * Detect insider signals from trade
    */
   private async detectSignals(
@@ -274,23 +230,25 @@ class TradeService {
         '🎯 Trade detected - analyzing wallet'
       );
 
-      // Step 2: Analyze wallet fingerprint via subgraph (primary) with on-chain fallback
-      const walletFingerprint =
-        await walletForensicsService.analyzeWalletViaSubgraph(trade.taker, {
+      // Step 2: Analyze wallet fingerprint via subgraph (now the only method)
+      const walletFingerprint = await walletForensicsService.analyzeWallet(
+        trade.taker,
+        {
           tradeSizeUSD: signal.tradeUsdValue,
           marketOI: parseFloat(signal.openInterest),
-        });
+        }
+      );
 
       logger.info(
         {
           wallet: trade.taker.substring(0, 10) + '...',
           isSuspicious: walletFingerprint.isSuspicious,
           dataSource:
-            walletFingerprint.subgraphMetadata?.dataSource ?? 'on-chain',
+            walletFingerprint.subgraphMetadata.dataSource ?? 'on-chain',
           subgraphFlags: walletFingerprint.subgraphFlags,
-          tradeCount: walletFingerprint.subgraphMetadata?.polymarketTradeCount,
+          tradeCount: walletFingerprint.subgraphMetadata.polymarketTradeCount,
           volumeUSD:
-            walletFingerprint.subgraphMetadata?.polymarketVolumeUSD.toFixed(2),
+            walletFingerprint.subgraphMetadata.polymarketVolumeUSD.toFixed(2),
         },
         '🔍 Wallet fingerprint analyzed'
       );

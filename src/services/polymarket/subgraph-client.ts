@@ -13,6 +13,9 @@ const SUBGRAPH_ENDPOINTS = {
   // Orderbook subgraph for CLOB trades (OrderFilled/OrdersMatched events)
   orderbook:
     'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/orderbook-subgraph/0.0.1/gn',
+  // Wallet subgraph for proxy-to-signer mapping
+  wallet:
+    'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/wallet-subgraph/0.0.1/gn',
 };
 
 /**
@@ -57,6 +60,26 @@ interface SubgraphOrderFilled {
 interface OrderbookQueryResponse {
   data?: {
     orderFilledEvents: SubgraphOrderFilled[];
+  };
+  errors?: Array<{
+    message: string;
+    locations?: Array<{ line: number; column: number }>;
+  }>;
+}
+
+/**
+ * Wallet subgraph types
+ */
+interface SubgraphWallet {
+  id: string; // The proxy wallet address
+  signer: string; // The actual user address (EOA)
+  type: string; // 'proxy' or 'safe'
+  createdAt: string;
+}
+
+interface WalletQueryResponse {
+  data?: {
+    wallet: SubgraphWallet | null;
   };
   errors?: Array<{
     message: string;
@@ -253,6 +276,20 @@ const USER_CLOB_TRADES_TAKER_QUERY = `
 `;
 
 /**
+ * GraphQL query to resolve proxy wallet to signer
+ */
+const WALLET_SIGNER_QUERY = `
+  query GetWalletSigner($proxyAddress: ID!) {
+    wallet(id: $proxyAddress) {
+      id
+      signer
+      type
+      createdAt
+    }
+  }
+`;
+
+/**
  * Rate limiter for subgraph queries
  */
 class SubgraphRateLimiter {
@@ -322,6 +359,7 @@ class PolymarketSubgraphClient {
   private static instance: PolymarketSubgraphClient | null = null;
   private readonly activityClient: AxiosInstance;
   private readonly orderbookClient: AxiosInstance;
+  private readonly walletClient: AxiosInstance;
   private readonly rateLimiter: SubgraphRateLimiter;
   private readonly maxRetries = 3;
   private readonly baseRetryDelay = 500;
@@ -339,11 +377,17 @@ class PolymarketSubgraphClient {
       headers: { 'Content-Type': 'application/json' },
     });
 
+    this.walletClient = axios.create({
+      baseURL: SUBGRAPH_ENDPOINTS.wallet,
+      timeout: 10000,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
     // Rate limit: 10 requests per second (conservative for public API)
     this.rateLimiter = new SubgraphRateLimiter(10);
 
     logger.info(
-      'Polymarket subgraph client initialized with orderbook support'
+      'Polymarket subgraph client initialized with wallet mapping support'
     );
   }
 
@@ -679,6 +723,55 @@ class PolymarketSubgraphClient {
         );
 
         return activity;
+      });
+    });
+  }
+
+  /**
+   * Resolve proxy wallet address to actual signer (user) address
+   * This is critical for proper user identification since WebSocket gives us proxy addresses
+   */
+  public async getSignerFromProxy(
+    proxyAddress: string
+  ): Promise<string | null> {
+    const normalizedAddress = proxyAddress.toLowerCase();
+
+    return this.rateLimiter.execute(async () => {
+      return this.retryRequest(async () => {
+        const response = await this.walletClient.post<WalletQueryResponse>('', {
+          query: WALLET_SIGNER_QUERY,
+          variables: { proxyAddress: normalizedAddress },
+        });
+
+        if (response.data.errors && response.data.errors.length > 0) {
+          logger.warn(
+            { errors: response.data.errors, proxyAddress: normalizedAddress },
+            'GraphQL errors resolving proxy wallet'
+          );
+          throw new Error(
+            `GraphQL errors: ${response.data.errors[0]?.message || 'Unknown error'}`
+          );
+        }
+
+        if (!response.data.data?.wallet) {
+          logger.debug(
+            { proxyAddress: normalizedAddress },
+            'No wallet mapping found for proxy address'
+          );
+          return null;
+        }
+
+        const wallet = response.data.data.wallet;
+        logger.debug(
+          {
+            proxy: wallet.id,
+            signer: wallet.signer,
+            type: wallet.type,
+          },
+          'Resolved proxy wallet to signer'
+        );
+
+        return wallet.signer;
       });
     });
   }

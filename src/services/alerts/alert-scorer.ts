@@ -253,13 +253,7 @@ class AlertScorerService {
         entryProb: (entryProbability * 100).toFixed(1) + '%',
         totalScore: score.totalScore,
         classification,
-        walletFlags: {
-          lowTxCount: walletFingerprint.flags.lowTxCount,
-          youngWallet: walletFingerprint.flags.youngWallet,
-          highPolymarketNetflow: walletFingerprint.flags.highPolymarketNetflow,
-          singlePurpose: walletFingerprint.flags.singlePurpose,
-          cexFunded: walletFingerprint.flags.cexFunded,
-        },
+        walletFlags: walletFingerprint.subgraphFlags,
         scores: {
           walletRaw: Math.round(walletScore100 / 2), // 0-50 scale
           walletScaled: Math.round(walletScore100), // 0-100 scale
@@ -315,34 +309,34 @@ class AlertScorerService {
   }
 
   /**
-   * Calculate wallet score from flags (0-50 scale)
+   * Calculate wallet score from subgraph flags (0-50 scale)
    */
   private calculateWalletScore(wallet: WalletFingerprint): number {
     let score = 0;
-    const { flags } = wallet;
+    const flags = wallet.subgraphFlags;
 
-    // Low transaction count (14 points)
-    if (flags.lowTxCount) {
+    // Low trade count on Polymarket (14 points)
+    if (flags.lowTradeCount) {
       score += 14;
     }
 
-    // Young wallet (12 points)
-    if (flags.youngWallet) {
+    // Young account on Polymarket (12 points)
+    if (flags.youngAccount) {
       score += 12;
     }
 
-    // High Polymarket netflow (12 points)
-    if (flags.highPolymarketNetflow) {
+    // High concentration in one market (12 points)
+    if (flags.highConcentration) {
       score += 12;
     }
 
-    // Single purpose wallet (6 points)
-    if (flags.singlePurpose) {
+    // Low volume trader (6 points)
+    if (flags.lowVolume) {
       score += 6;
     }
 
-    // CEX funded (6 points)
-    if (flags.cexFunded) {
+    // Fresh fat bet pattern (6 points)
+    if (flags.freshFatBet) {
       score += 6;
     }
 
