@@ -245,13 +245,8 @@ class TradePollingService {
     // Price is USDC per outcome token
     const price = usdcAmount / outcomeAmount;
 
-    // Resolve taker proxy to actual user
-    let takerAddress = subgraphTrade.taker;
-    const signerAddress =
-      await polymarketSubgraph.getSignerFromProxy(takerAddress);
-    if (signerAddress) {
-      takerAddress = signerAddress;
-    }
+    // Orderbook subgraph already provides actual user addresses (not proxy addresses)
+    const takerAddress = subgraphTrade.taker;
 
     const polyTrade: PolymarketTrade = {
       id: `subgraph-${subgraphTrade.id}`,
