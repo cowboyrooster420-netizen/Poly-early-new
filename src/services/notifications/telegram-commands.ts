@@ -473,7 +473,6 @@ class TelegramCommandHandler {
    */
   private async handleStatus(chatId: number): Promise<void> {
     const stats = marketService.getStats();
-    const thresholds = getThresholds();
 
     try {
       const prisma = db.getClient();
@@ -515,9 +514,9 @@ class TelegramCommandHandler {
         `• Trades processed: ${recentTrades}\n` +
         `• Alerts sent (24h): ${recentAlerts}\n\n` +
         `*Scoring System:*\n` +
-        `• Alert threshold: Score ≥ ${thresholds.alertThreshold || 40}\n` +
-        `• Min trade size: $${(thresholds.minTradeSize || 250).toLocaleString()}\n` +
-        `• Min OI: $${(thresholds.minOi || 5000).toLocaleString()}\n\n` +
+        `• Alert threshold: Score ≥ 40\n` +
+        `• Min trade size: $1,000\n` +
+        `• Min OI: $5,000\n\n` +
         `*All-Time Alerts:*\n` +
         `• 🚨 Strong: ${alertStrong}\n` +
         `• 🔴 High: ${alertHigh}\n` +
