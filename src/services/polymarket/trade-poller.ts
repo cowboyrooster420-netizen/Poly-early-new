@@ -177,29 +177,43 @@ class TradePollingService {
     const makerAsset = subgraphTrade.makerAssetId;
     const takerAsset = subgraphTrade.takerAssetId;
 
-    // Find market by either asset ID
-    const marketByMaker = marketService.getMarketByAssetId(makerAsset);
-    const marketByTaker = marketService.getMarketByAssetId(takerAsset);
-    const market = marketByMaker || marketByTaker;
+    // One asset must be USDC ("0") and the other must be a monitored asset
+    const isUSDCTrade = makerAsset === '0' || takerAsset === '0';
+    if (!isUSDCTrade) {
+      logger.debug(
+        {
+          makerAssetId: makerAsset,
+          takerAssetId: takerAsset,
+        },
+        'Trade does not involve USDC - skipping'
+      );
+      return null;
+    }
+
+    // Find market by the non-USDC asset
+    const nonUSDCAsset = makerAsset === '0' ? takerAsset : makerAsset;
+    const market = marketService.getMarketByAssetId(nonUSDCAsset);
 
     if (!market) {
       logger.debug(
         {
           makerAssetId: makerAsset,
           takerAssetId: takerAsset,
+          nonUSDCAsset,
         },
-        'Trade assets not in monitored markets'
+        'Non-USDC asset not in monitored markets'
       );
       return null;
     }
 
     // Determine trade direction and outcome
     // If taker is selling outcome token (maker buying), it's a SELL
-    const takerSellingOutcome = marketByTaker !== null;
+    const takerSellingOutcome =
+      takerAsset !== '0' && takerAsset === nonUSDCAsset;
     const side: 'buy' | 'sell' = takerSellingOutcome ? 'sell' : 'buy';
 
-    // Determine which outcome token
-    const outcomeAssetId = marketByMaker ? makerAsset : takerAsset;
+    // The outcome asset is the non-USDC asset
+    const outcomeAssetId = nonUSDCAsset;
     const outcome: 'yes' | 'no' =
       market.clobTokenIdYes === outcomeAssetId ? 'yes' : 'no';
 
