@@ -110,8 +110,21 @@ class TradePollingService {
           // Convert subgraph trade to our format
           const polyTrade = await this.convertToPolymarketTrade(trade);
           if (polyTrade) {
+            logger.info(
+              {
+                tradeId: polyTrade.id,
+                marketId: polyTrade.marketId,
+                size: polyTrade.size,
+                taker: polyTrade.taker.substring(0, 10) + '...',
+              },
+              '📤 Sending trade to trade service'
+            );
             await tradeService.processTrade(polyTrade);
             newTradesCount++;
+            logger.info(
+              { tradeId: polyTrade.id },
+              '✅ Trade sent to service successfully'
+            );
           }
 
           // Mark as processed

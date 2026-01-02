@@ -40,6 +40,14 @@ class TradeService {
    * Trades are processed sequentially to prevent resource exhaustion
    */
   public async processTrade(trade: PolymarketTrade): Promise<void> {
+    logger.info(
+      {
+        tradeId: trade.id,
+        queueSize: this.tradeQueue.length,
+        isProcessing: this.isProcessing,
+      },
+      '📨 Trade service received trade'
+    );
     // Drop trades if queue is full to prevent memory exhaustion
     if (this.tradeQueue.length >= this.MAX_QUEUE_SIZE) {
       logger.warn(
