@@ -372,6 +372,21 @@ class PolymarketWebSocketService {
         '';
       const transactionHash = (rawMsg['transaction_hash'] as string) || '';
 
+      // Skip trades without taker address - we can't identify the user
+      // WebSocket currently doesn't provide maker/taker addresses
+      if (!taker) {
+        logger.debug(
+          {
+            txHash: transactionHash ? transactionHash.slice(0, 16) : 'none',
+            assetId: msg.asset_id,
+            price: msg.price,
+            size: msg.size,
+          },
+          'Skipping trade without taker address - cannot identify user'
+        );
+        return;
+      }
+
       // Convert Polymarket message to our trade format
       const trade: PolymarketTrade = {
         id: `${msg.asset_id || msg.market}-${msg.timestamp || Date.now()}`,
@@ -386,13 +401,8 @@ class PolymarketWebSocketService {
         ...(transactionHash ? { transactionHash } : {}),
       };
 
-      // Log if taker is missing but we have a transaction hash
-      if (!taker && transactionHash) {
-        logger.debug(
-          { txHash: transactionHash.slice(0, 16), assetId: msg.asset_id },
-          'Trade missing taker - will lookup from transaction'
-        );
-      }
+      // This code is now unreachable since we return early if no taker
+      // Keeping transactionHash in trade object in case it's useful later
 
       logger.info(
         {

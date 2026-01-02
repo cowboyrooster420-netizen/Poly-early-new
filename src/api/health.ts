@@ -56,6 +56,7 @@ export async function registerHealthRoutes(
             database: await checkDatabaseHealth(),
             redis: await checkRedisHealth(),
             websocket: await checkWebSocketHealth(),
+            tradePoller: await checkTradePollerHealth(),
           },
         };
 
@@ -158,6 +159,46 @@ async function checkWebSocketHealth(): Promise<ServiceStatus> {
 
     if (health.error !== undefined) {
       result.error = health.error;
+    }
+
+    return result;
+  } catch (error) {
+    return {
+      status: 'down',
+      latency: Date.now() - startTime,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Check trade poller status
+ */
+async function checkTradePollerHealth(): Promise<ServiceStatus> {
+  const startTime = Date.now();
+  try {
+    const { tradePoller } = await import(
+      '../services/polymarket/trade-poller.js'
+    );
+    const status = tradePoller.getStatus();
+
+    // Consider healthy if running and polled within last 5 minutes
+    const isHealthy =
+      status.isRunning && Date.now() - status.lastPollTimestamp < 5 * 60 * 1000;
+
+    const result: ServiceStatus = {
+      status: isHealthy ? 'up' : 'down',
+      latency: Date.now() - startTime,
+      details: {
+        processedTrades: status.processedTradesCount,
+        lastPollAge: Math.floor((Date.now() - status.lastPollTimestamp) / 1000),
+      },
+    };
+
+    if (!isHealthy) {
+      result.error = status.isRunning
+        ? 'Polling stale (no recent polls)'
+        : 'Poller not running';
     }
 
     return result;

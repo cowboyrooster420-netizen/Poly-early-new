@@ -9,14 +9,15 @@ Production-grade automated detection system for identifying potentially informed
 ### 🎯 Signal Detection
 - **Hard Filters**: Trade ≥$1,000, Market OI ≥$5,000, Wallet score ≥40
 - **Real-time WebSocket**: Sub-second trade detection with automatic reconnection
+- **Subgraph Polling**: Fetches trades from orderbook subgraph every 30s (backup data source)
 - **Dormancy Detection**: Multiplier boost for trades on quiet markets (4-8+ hours inactive)
 
 ### 🔍 Wallet Forensics
-- **CEX Funding Detection**: Tracks wallets funded from 50+ known exchange addresses (14-day window)
-- **Wallet Age Analysis**: Flags wallets < 90 days old
-- **Transaction Heuristics**: Analyzes tx count (< 40 = suspicious), Polymarket netflow (≥ 85% = single-purpose)
-- **Protocol Diversity**: Checks interactions with other DeFi/gaming protocols
-- **Blockchain APIs**: Alchemy (25 req/sec) + Polygonscan (5 req/sec) with rate limiting
+- **Subgraph-Only Analysis**: Uses Polymarket's official subgraph data (proxy wallet aware)
+- **Trade History**: Analyzes historical trade count and volume from orderbook events
+- **Account Age**: Tracks days since first Polymarket trade
+- **Position Concentration**: Flags wallets with >80% value in single market
+- **Fresh Fat Bet Detection**: Identifies new wallets making large initial trades
 
 ### 📊 Alert Scoring (v2 - Tiered with Multipliers)
 - **Weighted 0-100 Score** combining:
@@ -51,6 +52,11 @@ Production-grade automated detection system for identifying potentially informed
 │           (wss://ws-subscriptions-clob.polymarket.com)          │
 └────────────────────────────┬────────────────────────────────────┘
                              │
+┌─────────────────────────────┴────────────────────────────────────┐
+│                  Polymarket Subgraph (Polling)                   │
+│              (Orderbook events with user addresses)              │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
                              ▼
                    ┌─────────────────┐
                    │  Trade Service  │
@@ -66,8 +72,8 @@ Production-grade automated detection system for identifying potentially informed
                             ▼
                    ┌─────────────────┐
                    │Wallet Forensics │
-                   │ - Alchemy API   │
-                   │ - Polygonscan   │
+                   │ - Subgraph API  │
+                   │ - Proxy Mapping │
                    └────────┬────────┘
                             │
                             ▼

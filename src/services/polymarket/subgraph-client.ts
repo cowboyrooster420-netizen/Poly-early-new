@@ -290,6 +290,30 @@ const WALLET_SIGNER_QUERY = `
 `;
 
 /**
+ * GraphQL query to get recent trades from orderbook
+ */
+const RECENT_TRADES_QUERY = `
+  query GetRecentTrades($since: BigInt!, $first: Int!) {
+    orderFilledEvents(
+      where: { timestamp_gte: $since }
+      orderBy: timestamp
+      orderDirection: desc
+      first: $first
+    ) {
+      id
+      timestamp
+      maker
+      taker
+      makerAssetId
+      takerAssetId
+      makerAmountFilled
+      takerAmountFilled
+      fee
+    }
+  }
+`;
+
+/**
  * Rate limiter for subgraph queries
  */
 class SubgraphRateLimiter {
@@ -772,6 +796,59 @@ class PolymarketSubgraphClient {
         );
 
         return wallet.signer;
+      });
+    });
+  }
+
+  /**
+   * Get recent trades from orderbook subgraph
+   * Returns trades with both maker and taker addresses
+   */
+  public async getRecentTrades(
+    sinceMinutes: number = 5,
+    limit: number = 100
+  ): Promise<SubgraphOrderFilled[]> {
+    const since = Math.floor(Date.now() / 1000) - sinceMinutes * 60;
+
+    return this.rateLimiter.execute(async () => {
+      return this.retryRequest(async () => {
+        const response =
+          await this.orderbookClient.post<OrderbookQueryResponse>('', {
+            query: RECENT_TRADES_QUERY,
+            variables: { since: since.toString(), first: limit },
+          });
+
+        if (response.data.errors && response.data.errors.length > 0) {
+          logger.warn(
+            { errors: response.data.errors },
+            'GraphQL errors fetching recent trades'
+          );
+          throw new Error(
+            `GraphQL errors: ${response.data.errors[0]?.message || 'Unknown error'}`
+          );
+        }
+
+        const trades = response.data.data?.orderFilledEvents || [];
+
+        logger.info(
+          {
+            tradesFound: trades.length,
+            sinceMinutes,
+            oldestTimestamp:
+              trades.length > 0
+                ? new Date(
+                    parseInt(trades[trades.length - 1]!.timestamp) * 1000
+                  ).toISOString()
+                : null,
+            newestTimestamp:
+              trades.length > 0
+                ? new Date(parseInt(trades[0]!.timestamp) * 1000).toISOString()
+                : null,
+          },
+          'Fetched recent trades from orderbook subgraph'
+        );
+
+        return trades;
       });
     });
   }

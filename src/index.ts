@@ -29,6 +29,7 @@ import { db } from './services/database/prisma.js';
 import { marketService } from './services/polymarket/market-service.js';
 import { tradeService } from './services/polymarket/trade-service.js';
 import { polymarketWs } from './services/polymarket/websocket.js';
+import { tradePoller } from './services/polymarket/trade-poller.js';
 import { telegramNotifier } from './services/notifications/telegram-notifier.js';
 import { telegramCommands } from './services/notifications/telegram-commands.js';
 import { cleanupService } from './services/database/cleanup-service.js';
@@ -131,6 +132,11 @@ async function main(): Promise<void> {
   // Start database cleanup service (prunes old trades daily)
   cleanupService.start();
 
+  // Start trade polling service (fetches trades from subgraph)
+  // This is needed because WebSocket doesn't provide user addresses
+  tradePoller.start();
+  logger.info('🔄 Trade polling service started (fetching from subgraph)');
+
   // Start HTTP server
   try {
     await app.listen({
@@ -208,6 +214,9 @@ async function main(): Promise<void> {
 
       // Stop cleanup service
       cleanupService.stop();
+
+      // Stop trade poller
+      tradePoller.stop();
 
       // Close WebSocket connection
       await polymarketWs.disconnect();
