@@ -87,20 +87,38 @@ class TradePollingService {
       // Process each trade
       let newTradesCount = 0;
       for (const trade of trades) {
-        // Skip if already processed
-        if (this.processedTradeIds.has(trade.id)) {
+        try {
+          // Skip if already processed
+          if (this.processedTradeIds.has(trade.id)) {
+            continue;
+          }
+
+          // Convert subgraph trade to our format
+          const polyTrade = await this.convertToPolymarketTrade(trade);
+          if (polyTrade) {
+            await tradeService.processTrade(polyTrade);
+            newTradesCount++;
+          }
+
+          // Mark as processed
+          this.processedTradeIds.add(trade.id);
+        } catch (tradeError) {
+          logger.error(
+            {
+              error:
+                tradeError instanceof Error
+                  ? tradeError.message
+                  : String(tradeError),
+              tradeId: trade.id,
+              makerAssetId: trade.makerAssetId,
+              takerAssetId: trade.takerAssetId,
+              timestamp: trade.timestamp,
+            },
+            'Failed to process individual trade from subgraph'
+          );
+          // Continue processing other trades even if one fails
           continue;
         }
-
-        // Convert subgraph trade to our format
-        const polyTrade = await this.convertToPolymarketTrade(trade);
-        if (polyTrade) {
-          await tradeService.processTrade(polyTrade);
-          newTradesCount++;
-        }
-
-        // Mark as processed
-        this.processedTradeIds.add(trade.id);
 
         // Clean up old IDs to prevent memory leak
         if (this.processedTradeIds.size > this.MAX_PROCESSED_IDS) {
@@ -124,8 +142,9 @@ class TradePollingService {
       logger.error(
         {
           error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
         },
-        'Failed to poll trades from subgraph'
+        'Failed to poll trades from subgraph - top level error'
       );
     }
   }
@@ -184,6 +203,21 @@ class TradePollingService {
     const usdcAmount = takerSellingOutcome
       ? parseFloat(subgraphTrade.makerAmountFilled) / 1e6
       : parseFloat(subgraphTrade.takerAmountFilled) / 1e6;
+
+    // Validate amounts
+    if (outcomeAmount <= 0 || usdcAmount < 0) {
+      logger.warn(
+        {
+          tradeId: subgraphTrade.id,
+          outcomeAmount,
+          usdcAmount,
+          makerAmountFilled: subgraphTrade.makerAmountFilled,
+          takerAmountFilled: subgraphTrade.takerAmountFilled,
+        },
+        'Invalid trade amounts detected'
+      );
+      return null;
+    }
 
     // Price is USDC per outcome token
     const price = usdcAmount / outcomeAmount;
