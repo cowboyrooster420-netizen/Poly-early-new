@@ -335,6 +335,14 @@ class PolymarketWebSocketService {
           }
         } else if (eventType === 'trade' || eventType === 'last_trade_price') {
           // Direct trade events
+          logger.debug(
+            {
+              eventType,
+              fields: Object.keys(msg).join(', '),
+              msg: JSON.stringify(msg).substring(0, 200),
+            },
+            'Processing trade event'
+          );
           this.handleTradeMessage(msg);
         } else if (eventType) {
           logger.debug({ eventType, market: msg.market }, 'Other event type');
@@ -393,6 +401,9 @@ class PolymarketWebSocketService {
           price: trade.price,
           side: trade.side,
           hasTaker: !!taker,
+          maker,
+          taker,
+          rawFields: Object.keys(rawMsg).join(', '),
         },
         'Trade event received'
       );
