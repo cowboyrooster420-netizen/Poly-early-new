@@ -291,14 +291,16 @@ const WALLET_SIGNER_QUERY = `
 
 /**
  * GraphQL query to get recent trades from orderbook
+ * We need to match trades where one asset is USDC ("0") and the other is a monitored asset
  */
 const RECENT_TRADES_QUERY = `
   query GetRecentTrades($since: BigInt!, $first: Int!, $assetIds: [String!]) {
     orderFilledEvents(
       where: { 
+        timestamp_gte: $since,
         or: [
-          { timestamp_gte: $since, makerAssetId_in: $assetIds },
-          { timestamp_gte: $since, takerAssetId_in: $assetIds }
+          { makerAssetId: "0", takerAssetId_in: $assetIds },
+          { takerAssetId: "0", makerAssetId_in: $assetIds }
         ]
       }
       orderBy: timestamp
