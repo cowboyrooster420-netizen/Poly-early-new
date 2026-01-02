@@ -88,8 +88,13 @@ class TradePollingService {
         return;
       }
 
+      const monitoredAssetIds = marketService.getMonitoredAssetIds();
       logger.info(
-        { tradeCount: trades.length },
+        {
+          tradeCount: trades.length,
+          monitoredAssetCount: monitoredAssetIds.length,
+          sampleAssetIds: monitoredAssetIds.slice(0, 5),
+        },
         'Processing trades from subgraph'
       );
 
@@ -195,13 +200,14 @@ class TradePollingService {
     const market = marketService.getMarketByAssetId(nonUSDCAsset);
 
     if (!market) {
-      logger.debug(
+      logger.warn(
         {
           makerAssetId: makerAsset,
           takerAssetId: takerAsset,
           nonUSDCAsset,
+          tradeId: subgraphTrade.id,
         },
-        'Non-USDC asset not in monitored markets'
+        'Non-USDC asset not in monitored markets - trade skipped'
       );
       return null;
     }
