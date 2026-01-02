@@ -71,8 +71,17 @@ class TradePollingService {
    */
   private async pollTrades(): Promise<void> {
     try {
+      // Get monitored asset IDs to filter trades
+      const assetIds = marketService.getMonitoredAssetIds();
+
+      if (assetIds.length === 0) {
+        logger.warn('No monitored assets found - skipping trade poll');
+        return;
+      }
+
       // Get trades from last 2 minutes (overlap to ensure we don't miss any)
-      const trades = await polymarketSubgraph.getRecentTrades(2, 200);
+      // Only fetch trades for our monitored markets
+      const trades = await polymarketSubgraph.getRecentTrades(2, 500, assetIds);
 
       if (trades.length === 0) {
         logger.debug('No recent trades found in subgraph');

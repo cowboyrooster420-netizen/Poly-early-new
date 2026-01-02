@@ -293,9 +293,15 @@ const WALLET_SIGNER_QUERY = `
  * GraphQL query to get recent trades from orderbook
  */
 const RECENT_TRADES_QUERY = `
-  query GetRecentTrades($since: BigInt!, $first: Int!) {
+  query GetRecentTrades($since: BigInt!, $first: Int!, $assetIds: [String!]) {
     orderFilledEvents(
-      where: { timestamp_gte: $since }
+      where: { 
+        timestamp_gte: $since,
+        or: [
+          { makerAssetId_in: $assetIds },
+          { takerAssetId_in: $assetIds }
+        ]
+      }
       orderBy: timestamp
       orderDirection: desc
       first: $first
@@ -803,10 +809,12 @@ class PolymarketSubgraphClient {
   /**
    * Get recent trades from orderbook subgraph
    * Returns trades with both maker and taker addresses
+   * @param assetIds - Optional filter for specific asset IDs (if not provided, fetches all)
    */
   public async getRecentTrades(
     sinceMinutes: number = 5,
-    limit: number = 100
+    limit: number = 100,
+    assetIds?: string[]
   ): Promise<SubgraphOrderFilled[]> {
     const since = Math.floor(Date.now() / 1000) - sinceMinutes * 60;
 
@@ -815,7 +823,11 @@ class PolymarketSubgraphClient {
         const response =
           await this.orderbookClient.post<OrderbookQueryResponse>('', {
             query: RECENT_TRADES_QUERY,
-            variables: { since: since.toString(), first: limit },
+            variables: {
+              since: since.toString(),
+              first: limit,
+              assetIds: assetIds || [], // Pass empty array if no filter
+            },
           });
 
         if (response.data.errors && response.data.errors.length > 0) {
@@ -834,6 +846,7 @@ class PolymarketSubgraphClient {
           {
             tradesFound: trades.length,
             sinceMinutes,
+            assetIdsCount: assetIds?.length || 0,
             oldestTimestamp:
               trades.length > 0
                 ? new Date(

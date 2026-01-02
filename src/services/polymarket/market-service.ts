@@ -245,6 +245,22 @@ class MarketService {
   }
 
   /**
+   * Get all monitored asset IDs (CLOB token IDs)
+   */
+  public getMonitoredAssetIds(): string[] {
+    const assetIds: string[] = [];
+    for (const market of this.monitoredMarkets.values()) {
+      if (market.clobTokenIdYes) {
+        assetIds.push(market.clobTokenIdYes);
+      }
+      if (market.clobTokenIdNo) {
+        assetIds.push(market.clobTokenIdNo);
+      }
+    }
+    return assetIds;
+  }
+
+  /**
    * Add a market to monitoring
    */
   public async addMarket(market: MarketConfig): Promise<void> {
