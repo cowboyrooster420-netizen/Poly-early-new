@@ -297,10 +297,9 @@ const RECENT_TRADES_QUERY = `
   query GetRecentTrades($since: BigInt!, $first: Int!, $assetIds: [String!]) {
     orderFilledEvents(
       where: { 
-        timestamp_gte: $since,
         or: [
-          { makerAssetId: "0", takerAssetId_in: $assetIds },
-          { takerAssetId: "0", makerAssetId_in: $assetIds }
+          { timestamp_gte: $since, makerAssetId: "0", takerAssetId_in: $assetIds },
+          { timestamp_gte: $since, takerAssetId: "0", makerAssetId_in: $assetIds }
         ]
       }
       orderBy: timestamp
