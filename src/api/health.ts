@@ -14,6 +14,7 @@ interface HealthCheckResponse {
     database: ServiceStatus;
     redis: ServiceStatus;
     websocket: ServiceStatus;
+    tradePoller: ServiceStatus;
   };
 }
 
@@ -21,6 +22,7 @@ interface ServiceStatus {
   status: 'up' | 'down' | 'unknown';
   latency?: number;
   error?: string;
+  details?: Record<string, unknown>;
 }
 
 /**
