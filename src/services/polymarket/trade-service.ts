@@ -1,4 +1,5 @@
 import { Decimal } from '@prisma/client/runtime/library';
+import { AxiosError } from 'axios';
 
 import { db } from '../database/prisma.js';
 import { signalDetector } from '../signals/signal-detector.js';
@@ -108,24 +109,48 @@ class TradeService {
       // Resolve taker address - WebSocket gives us proxy addresses, we need actual user addresses
       let taker = trade.taker;
       if (taker) {
-        // Resolve proxy wallet to actual signer (user) address
-        const signerAddress =
-          await polymarketSubgraph.getSignerFromProxy(taker);
-        if (signerAddress) {
-          logger.debug(
-            {
-              proxy: taker.substring(0, 10) + '...',
-              signer: signerAddress.substring(0, 10) + '...',
-            },
-            'Resolved proxy wallet to signer address'
-          );
-          taker = signerAddress;
-        } else {
-          // If no mapping found, this might be a direct EOA trade (rare)
-          logger.warn(
-            { proxyAddress: taker },
-            'No signer mapping found for address - using as-is'
-          );
+        try {
+          // Resolve proxy wallet to actual signer (user) address
+          const signerAddress =
+            await polymarketSubgraph.getSignerFromProxy(taker);
+          if (signerAddress) {
+            logger.debug(
+              {
+                proxy: taker.substring(0, 10) + '...',
+                signer: signerAddress.substring(0, 10) + '...',
+              },
+              'Resolved proxy wallet to signer address'
+            );
+            taker = signerAddress;
+          } else {
+            // If no mapping found, this might be a direct EOA trade (rare)
+            logger.debug(
+              { proxyAddress: taker },
+              'No signer mapping found for address - using as-is'
+            );
+          }
+        } catch (error) {
+          // Handle 404s and other errors from the wallet subgraph
+          if (error instanceof AxiosError && error.response?.status === 404) {
+            logger.debug(
+              { proxyAddress: taker },
+              'Wallet subgraph returned 404 - using address as-is'
+            );
+          } else if (error instanceof Error && error.message.includes('404')) {
+            logger.debug(
+              { proxyAddress: taker },
+              'Wallet subgraph returned 404 - using address as-is'
+            );
+          } else {
+            logger.warn(
+              {
+                error: error instanceof Error ? error.message : 'Unknown error',
+                proxyAddress: taker,
+              },
+              'Failed to resolve proxy wallet - using address as-is'
+            );
+          }
+          // Continue with the original address
         }
       } else {
         logger.warn(
