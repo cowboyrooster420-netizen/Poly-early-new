@@ -233,6 +233,13 @@ class MarketService {
    * Get market by CLOB token ID (asset ID)
    */
   public getMarketByAssetId(assetId: string): MarketConfig | undefined {
+    // First check if assetId matches a market ID directly
+    const marketById = this.monitoredMarkets.get(assetId);
+    if (marketById) {
+      return marketById;
+    }
+
+    // Fallback: check if assetId matches CLOB token IDs
     for (const market of this.monitoredMarkets.values()) {
       if (
         market.clobTokenIdYes === assetId ||
