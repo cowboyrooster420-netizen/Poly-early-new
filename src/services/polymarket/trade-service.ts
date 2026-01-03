@@ -160,15 +160,48 @@ class TradeService {
       );
 
       // Store trade to database
+      logger.debug(
+        { tradeId: tradeWithMarketId.id },
+        'Storing trade to database'
+      );
       await this.storeTrade(tradeWithMarketId);
+      logger.debug(
+        { tradeId: tradeWithMarketId.id },
+        'Trade stored successfully'
+      );
 
       // Increment counter
       this.tradeCount++;
 
       // Trigger signal detection pipeline
+      logger.debug(
+        { tradeId: tradeWithMarketId.id },
+        'Starting signal detection pipeline'
+      );
       await this.detectSignals(tradeWithMarketId, market.question, market.slug);
+      logger.debug(
+        { tradeId: tradeWithMarketId.id },
+        'Signal detection completed'
+      );
     } catch (error) {
-      logger.error({ error, tradeId: trade.id }, 'Failed to process trade');
+      logger.error(
+        {
+          error:
+            error instanceof Error
+              ? {
+                  message: error.message,
+                  stack: error.stack,
+                  name: error.name,
+                }
+              : error,
+          tradeId: trade.id,
+          marketId: trade.marketId,
+          assetId: trade.marketId,
+          taker: trade.taker,
+          maker: trade.maker,
+        },
+        'Failed to process trade'
+      );
       // Don't throw - we don't want one bad trade to kill the stream
     }
   }
@@ -199,7 +232,22 @@ class TradeService {
 
       logger.debug({ tradeId: trade.id }, 'Trade stored to database');
     } catch (error) {
-      logger.error({ error, tradeId: trade.id }, 'Failed to store trade');
+      logger.error(
+        {
+          error:
+            error instanceof Error
+              ? {
+                  message: error.message,
+                  stack: error.stack,
+                  name: error.name,
+                }
+              : error,
+          tradeId: trade.id,
+          marketId: trade.marketId,
+        },
+        'Failed to store trade'
+      );
+      throw error; // Re-throw to trigger main error handler
     }
   }
 
@@ -332,7 +380,22 @@ class TradeService {
         );
       }
     } catch (error) {
-      logger.error({ error, tradeId: trade.id }, 'Failed to detect signals');
+      logger.error(
+        {
+          error:
+            error instanceof Error
+              ? {
+                  message: error.message,
+                  stack: error.stack,
+                  name: error.name,
+                }
+              : error,
+          tradeId: trade.id,
+          marketId: trade.marketId,
+          taker: trade.taker,
+        },
+        'Failed to detect signals'
+      );
       // Don't throw - signal detection failure shouldn't break trade processing
     }
   }
