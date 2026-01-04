@@ -282,6 +282,14 @@ class AlertScorerService {
     walletScore: number
   ): Promise<{ passed: boolean; reason: string }> {
     if (tradeUsdValue < this.MIN_TRADE_SIZE_USD) {
+      logger.info(
+        {
+          tradeUsdValue: tradeUsdValue.toFixed(2),
+          minRequired: this.MIN_TRADE_SIZE_USD,
+          filterType: 'trade_size',
+        },
+        '🚫 Alert filtered: Trade size too small'
+      );
       await this.incrementStat('filtered_trade_size');
       return {
         passed: false,
@@ -290,6 +298,14 @@ class AlertScorerService {
     }
 
     if (openInterest < this.MIN_OI_USD) {
+      logger.info(
+        {
+          marketOI: openInterest.toFixed(2),
+          minRequired: this.MIN_OI_USD,
+          filterType: 'market_oi',
+        },
+        '🚫 Alert filtered: Market OI too low'
+      );
       await this.incrementStat('filtered_low_oi');
       return {
         passed: false,
@@ -298,6 +314,14 @@ class AlertScorerService {
     }
 
     if (walletScore < this.MIN_WALLET_SCORE) {
+      logger.info(
+        {
+          walletScore: walletScore.toFixed(0),
+          minRequired: this.MIN_WALLET_SCORE,
+          filterType: 'wallet_score',
+        },
+        '🚫 Alert filtered: Wallet score too low'
+      );
       await this.incrementStat('filtered_wallet_score');
       return {
         passed: false,

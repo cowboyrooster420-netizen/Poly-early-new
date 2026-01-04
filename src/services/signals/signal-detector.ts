@@ -106,15 +106,16 @@ class SignalDetector {
 
       // Check if trade meets minimum OI threshold
       if (oiPercentage < thresholds.minOiPercentage) {
-        logger.debug(
+        logger.info(
           {
             tradeId: trade.id,
             tradeUsdValue: tradeUsdValue.toFixed(2),
             openInterest: marketData.openInterest,
             oiPercentage: oiPercentage.toFixed(2),
             threshold: thresholds.minOiPercentage,
+            reason: 'Below OI threshold',
           },
-          'Trade does not meet OI threshold'
+          '🚫 Trade filtered: OI% too low'
         );
         await this.incrementStat('filtered_oi_threshold');
         return null;

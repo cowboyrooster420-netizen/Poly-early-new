@@ -2,6 +2,10 @@ import {
   polymarketSubgraph,
   type SubgraphWalletData,
 } from '../polymarket/subgraph-client.js';
+import {
+  polymarketDataApi,
+  type DataApiUserData,
+} from '../polymarket/data-api-client.js';
 import { redis } from '../cache/redis.js';
 import { db, type PrismaClient } from '../database/prisma.js';
 import { logger } from '../../utils/logger.js';
@@ -105,7 +109,24 @@ class WalletForensicsService {
     );
 
     try {
-      // Fetch data from subgraphs
+      // Try Data API first (more reliable)
+      const dataApiData =
+        await polymarketDataApi.getUserData(normalizedAddress);
+
+      // If Data API has data, use it preferentially
+      if (dataApiData.activity || dataApiData.recentTrades.length > 0) {
+        logger.info(
+          { address: normalizedAddress },
+          'Using Data API for wallet analysis'
+        );
+        return this.analyzeViaDataApi(
+          normalizedAddress,
+          dataApiData,
+          tradeContext
+        );
+      }
+
+      // Fallback to subgraph
       const subgraphData =
         await polymarketSubgraph.getWalletData(normalizedAddress);
 
@@ -117,7 +138,7 @@ class WalletForensicsService {
       ) {
         logger.info(
           { address: normalizedAddress },
-          'No subgraph data found - new user'
+          'No data found in either API - new user'
         );
         return this.createNewUserFingerprint(normalizedAddress, tradeContext);
       }
@@ -304,6 +325,106 @@ class WalletForensicsService {
       highConcentration,
       freshFatBet,
     };
+  }
+
+  /**
+   * Analyze wallet using Data API data
+   */
+  private async analyzeViaDataApi(
+    address: string,
+    data: DataApiUserData,
+    tradeContext?: { tradeSizeUSD: number; marketOI: number }
+  ): Promise<WalletFingerprint> {
+    const activity = data.activity;
+    const metrics = polymarketDataApi.calculateWalletMetrics(data);
+
+    // Calculate flags based on Data API data
+    const flags: SubgraphFlags = {
+      lowTradeCount:
+        !activity || activity.totalTrades <= thresholds.subgraphLowTradeCount,
+      youngAccount: metrics.isNewTrader,
+      lowVolume:
+        !activity ||
+        parseFloat(activity.totalVolume || '0') <=
+          thresholds.subgraphLowVolumeUSD,
+      highConcentration: metrics.isSpecialized,
+      freshFatBet: false, // Calculate below
+    };
+
+    // Check fresh fat bet pattern
+    if (tradeContext && activity) {
+      const isLargeTrade =
+        tradeContext.tradeSizeUSD >= thresholds.subgraphFreshFatBetSizeUSD;
+      const isSmallMarket =
+        tradeContext.marketOI <= thresholds.subgraphFreshFatBetMaxOI;
+      const isFreshAccount =
+        activity.totalTrades <= thresholds.subgraphFreshFatBetPriorTrades;
+
+      flags.freshFatBet = isLargeTrade && isSmallMarket && isFreshAccount;
+    }
+
+    // Calculate account age
+    let accountAgeDays: number | null = null;
+    if (activity?.firstTradeTimestamp) {
+      accountAgeDays = Math.floor(
+        (Date.now() - activity.firstTradeTimestamp) / (1000 * 60 * 60 * 24)
+      );
+    }
+
+    // Determine if suspicious - use both flag count and pattern score
+    const suspiciousFlagCount = Object.values(flags).filter(Boolean).length;
+    const isSuspicious =
+      suspiciousFlagCount >= 2 || metrics.tradingPatternScore >= 60;
+
+    const fingerprint: WalletFingerprint = {
+      address: address.toLowerCase(),
+      isSuspicious,
+      subgraphFlags: flags,
+      subgraphMetadata: {
+        polymarketTradeCount: activity?.totalTrades || 0,
+        polymarketVolumeUSD: parseFloat(activity?.totalVolume || '0'),
+        polymarketAccountAgeDays: accountAgeDays,
+        maxPositionConcentration: 0, // Data API doesn't provide this directly
+        dataSource: 'subgraph',
+      },
+      analyzedAt: new Date(),
+      // Backwards compatibility
+      flags: {
+        cexFunded: false,
+        lowTxCount: flags.lowTradeCount,
+        youngWallet: flags.youngAccount,
+        highPolymarketNetflow: true,
+        singlePurpose: flags.highConcentration,
+      },
+      metadata: {
+        totalTransactions: activity?.totalTrades || 0,
+        walletAgeDays: accountAgeDays ?? 0,
+        firstSeenTimestamp: activity?.firstTradeTimestamp || null,
+        cexFundingSource: null,
+        cexFundingTimestamp: null,
+        polymarketNetflowPercentage: 100,
+        uniqueProtocolsInteracted: 1,
+      },
+    };
+
+    // Cache and persist
+    await this.cacheFingerprint(address.toLowerCase(), fingerprint);
+    await this.persistFingerprint(fingerprint);
+
+    logger.info(
+      {
+        address: address.toLowerCase(),
+        isSuspicious,
+        flags,
+        patternScore: metrics.tradingPatternScore,
+        winRate: activity?.winRate || 0,
+        totalPnL: activity?.totalPnL || '0',
+        dataSource: 'data-api',
+      },
+      'Wallet analysis complete (Data API)'
+    );
+
+    return fingerprint;
   }
 
   /**

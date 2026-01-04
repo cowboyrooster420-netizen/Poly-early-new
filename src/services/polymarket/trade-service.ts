@@ -296,6 +296,16 @@ class TradeService {
 
       if (signal === null) {
         // Trade doesn't meet size/impact thresholds
+        logger.debug(
+          {
+            tradeId: trade.id,
+            marketId: trade.marketId,
+            size: trade.size,
+            price: trade.price,
+            reason: 'Trade below size/impact thresholds',
+          },
+          '🚫 Trade filtered out - no signal detected'
+        );
         return;
       }
 
@@ -324,8 +334,7 @@ class TradeService {
         {
           wallet: trade.taker.substring(0, 10) + '...',
           isSuspicious: walletFingerprint.isSuspicious,
-          dataSource:
-            walletFingerprint.subgraphMetadata.dataSource ?? 'on-chain',
+          dataSource: walletFingerprint.subgraphMetadata.dataSource,
           subgraphFlags: walletFingerprint.subgraphFlags,
           tradeCount: walletFingerprint.subgraphMetadata.polymarketTradeCount,
           volumeUSD:
