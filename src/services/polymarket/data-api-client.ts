@@ -7,10 +7,37 @@ import { logger } from '../../utils/logger.js';
  * Docs: https://docs.polymarket.com/data-api
  */
 
-const DATA_API_BASE_URL = 'https://data.api.polymarket.com';
+const DATA_API_BASE_URL = 'https://data-api.polymarket.com';
 
 /**
  * User activity response from Data API
+ */
+export interface DataApiActivity {
+  proxyWallet: string;
+  timestamp: number;
+  conditionId: string;
+  type: 'TRADE' | 'SPLIT' | 'MERGE';
+  size: number;
+  usdcSize: number;
+  transactionHash: string;
+  price?: number;
+  asset?: string;
+  side?: 'BUY' | 'SELL';
+  outcomeIndex?: number;
+  title: string;
+  slug: string;
+  icon?: string;
+  eventSlug: string;
+  outcome: string;
+  name?: string;
+  pseudonym?: string;
+  bio?: string;
+  profileImage?: string;
+  profileImageOptimized?: string;
+}
+
+/**
+ * Aggregated user activity summary (computed from activity items)
  */
 export interface DataApiUserActivity {
   address: string;
@@ -27,16 +54,25 @@ export interface DataApiUserActivity {
  * User trade history response
  */
 export interface DataApiTrade {
-  id: string;
-  marketId: string;
+  proxyWallet: string;
+  side: 'BUY' | 'SELL';
+  asset: string;
+  conditionId: string;
+  size: number;
+  price: number;
   timestamp: number;
-  side: 'buy' | 'sell';
-  outcome: 'yes' | 'no';
-  size: string;
-  price: string;
-  fee: string;
-  realized?: boolean;
-  pnl?: string;
+  title: string;
+  slug: string;
+  icon?: string;
+  eventSlug: string;
+  outcome: string;
+  outcomeIndex: number;
+  name?: string;
+  pseudonym?: string;
+  bio?: string;
+  profileImage?: string;
+  profileImageOptimized?: string;
+  transactionHash: string;
 }
 
 /**
@@ -96,7 +132,9 @@ class PolymarketDataApiClient {
     address: string
   ): Promise<DataApiUserActivity | null> {
     try {
-      const response = await this.client.get(`/user/${address}/activity`);
+      const response = await this.client.get('/activity', {
+        params: { user: address },
+      });
 
       if (response.status === 404) {
         logger.debug({ address }, 'No activity found for user');
@@ -129,11 +167,15 @@ class PolymarketDataApiClient {
     limit: number = 100
   ): Promise<DataApiTrade[]> {
     try {
-      const response = await this.client.get(`/user/${address}/trades`, {
-        params: { limit, sort: 'desc' },
+      const response = await this.client.get<DataApiTrade[]>('/trades', {
+        params: {
+          user: address,
+          limit,
+          takerOnly: true,
+        },
       });
 
-      return response.data.trades || [];
+      return response.data || [];
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 404) {
         logger.debug({ address }, 'No trades found for user');
@@ -156,9 +198,11 @@ class PolymarketDataApiClient {
    */
   public async getUserPositions(address: string): Promise<DataApiPosition[]> {
     try {
-      const response = await this.client.get(`/user/${address}/positions`);
+      const response = await this.client.get<DataApiPosition[]>('/positions', {
+        params: { user: address },
+      });
 
-      return response.data.positions || [];
+      return response.data || [];
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 404) {
         logger.debug({ address }, 'No positions found for user');
@@ -181,11 +225,14 @@ class PolymarketDataApiClient {
    */
   public async getClosedPositions(address: string): Promise<DataApiPosition[]> {
     try {
-      const response = await this.client.get(
-        `/user/${address}/closed-positions`
+      const response = await this.client.get<DataApiPosition[]>(
+        '/closed-positions',
+        {
+          params: { user: address },
+        }
       );
 
-      return response.data.positions || [];
+      return response.data || [];
     } catch (error) {
       if (isAxiosError(error) && error.response?.status === 404) {
         logger.debug({ address }, 'No closed positions found for user');
@@ -269,7 +316,7 @@ class PolymarketDataApiClient {
     isSpecialized: boolean;
     tradingPatternScore: number;
   } {
-    const { activity, recentTrades } = data;
+    const { activity } = data;
 
     // New trader detection
     const isNewTrader = !activity || activity.totalTrades < 10;
@@ -297,11 +344,8 @@ class PolymarketDataApiClient {
     if (winRate < 40 && totalTrades > 10) patternScore += 25; // Poor win rate
     if (isSpecialized) patternScore += 20; // Focused on specific markets
 
-    // Check for recent losing streak
-    const recentLosses = recentTrades
-      .slice(0, 10)
-      .filter((t) => t.pnl && parseFloat(t.pnl) < 0).length;
-    if (recentLosses >= 7) patternScore += 20; // 70%+ losses in recent trades
+    // Note: PnL data not available from trades endpoint,
+    // would need positions endpoint for realized PnL
 
     return {
       isNewTrader,
