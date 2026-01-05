@@ -40,7 +40,7 @@ class SignalDetector {
   /**
    * Increment a stat counter
    */
-  private async incrementStat(field: string): Promise<void> {
+  public async incrementStat(field: string): Promise<void> {
     try {
       await redis.hincrby(STATS_KEY, field, 1);
     } catch (error) {

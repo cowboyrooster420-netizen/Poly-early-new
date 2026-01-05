@@ -26,11 +26,11 @@ export interface ServiceHealth {
 
 export class HealthMonitor {
   private static instance: HealthMonitor | null = null;
-  
+
   private constructor() {
     logger.info('Health monitor initialized');
   }
-  
+
   public static getInstance(): HealthMonitor {
     if (HealthMonitor.instance === null) {
       HealthMonitor.instance = new HealthMonitor();
@@ -67,10 +67,10 @@ export class HealthMonitor {
     };
 
     // Determine overall health
-    const serviceStatuses = Object.values(health.services).map(s => s.status);
-    if (serviceStatuses.every(s => s === 'up')) {
+    const serviceStatuses = Object.values(health.services).map((s) => s.status);
+    if (serviceStatuses.every((s) => s === 'up')) {
       health.status = 'healthy';
-    } else if (serviceStatuses.some(s => s === 'down')) {
+    } else if (serviceStatuses.some((s) => s === 'down')) {
       health.status = 'unhealthy';
     } else {
       health.status = 'degraded';
@@ -85,11 +85,11 @@ export class HealthMonitor {
   private async checkRedisHealth(): Promise<ServiceHealth> {
     try {
       const healthCheck = await redis.healthCheck();
-      
+
       return {
         status: healthCheck.isHealthy ? 'up' : 'down',
         latency: healthCheck.latency,
-        error: healthCheck.error,
+        ...(healthCheck.error ? { error: healthCheck.error } : {}),
       };
     } catch (error) {
       return {
@@ -106,10 +106,10 @@ export class HealthMonitor {
     try {
       const start = Date.now();
       const prisma = db.getClient();
-      
+
       // Run a simple query
       await prisma.$queryRaw`SELECT 1 as healthy`;
-      
+
       return {
         status: 'up',
         latency: Date.now() - start,
@@ -132,21 +132,26 @@ export class HealthMonitor {
         subgraph: await circuitBreakers.subgraph.getStats(),
         alchemy: await circuitBreakers.alchemy.getStats(),
       };
-      
+
       // Check if any circuit is open
-      const anyOpen = Object.values(stats).some(s => s.state.state === 'open');
-      
+      const anyOpen = Object.values(stats).some(
+        (s) => s.state.state === 'open'
+      );
+
       return {
         status: anyOpen ? 'degraded' : 'up',
         details: {
-          circuits: Object.entries(stats).reduce((acc, [name, stat]) => ({
-            ...acc,
-            [name]: {
-              state: stat.state.state,
-              failures: stat.recentFailures,
-              successes: stat.recentSuccesses,
-            },
-          }), {}),
+          circuits: Object.entries(stats).reduce(
+            (acc, [name, stat]) => ({
+              ...acc,
+              [name]: {
+                state: stat.state.state,
+                failures: stat.recentFailures,
+                successes: stat.recentSuccesses,
+              },
+            }),
+            {}
+          ),
         },
       };
     } catch (error) {
@@ -163,20 +168,24 @@ export class HealthMonitor {
   private async checkSignalDetectorHealth(): Promise<ServiceHealth> {
     try {
       const stats = await signalDetector.getStats();
-      
-      const totalAnalyzed = stats.trades_analyzed || 0;
+
+      const totalAnalyzed = stats['trades_analyzed'] || 0;
       const totalFiltered = Object.entries(stats)
         .filter(([key]) => key.startsWith('filtered_'))
         .reduce((sum, [_, value]) => sum + value, 0);
-      
+
       return {
         status: 'up',
         details: {
           tradesAnalyzed: totalAnalyzed,
           tradesFiltered: totalFiltered,
-          passRate: totalAnalyzed > 0 
-            ? ((totalAnalyzed - totalFiltered) / totalAnalyzed * 100).toFixed(2) + '%'
-            : '0%',
+          passRate:
+            totalAnalyzed > 0
+              ? (
+                  ((totalAnalyzed - totalFiltered) / totalAnalyzed) *
+                  100
+                ).toFixed(2) + '%'
+              : '0%',
         },
       };
     } catch (error) {
@@ -193,7 +202,7 @@ export class HealthMonitor {
   private checkMemoryHealth(): ServiceHealth {
     const usage = process.memoryUsage();
     const heapUsedPercent = (usage.heapUsed / usage.heapTotal) * 100;
-    
+
     return {
       status: heapUsedPercent > 90 ? 'degraded' : 'up',
       details: {
@@ -225,11 +234,14 @@ export class HealthMonitor {
       const recentKeys = cacheKeys; // Would need to track access times for real implementation
 
       // Calculate error rate from recent fingerprints
-      const errorCount = await redis.getClient().get('stats:wallet:errors') || '0';
-      const totalCount = await redis.getClient().get('stats:wallet:total') || '0';
-      const errorRate = parseInt(totalCount) > 0 
-        ? (parseInt(errorCount) / parseInt(totalCount) * 100)
-        : 0;
+      const errorCount =
+        (await redis.getClient().get('stats:wallet:errors')) || '0';
+      const totalCount =
+        (await redis.getClient().get('stats:wallet:total')) || '0';
+      const errorRate =
+        parseInt(totalCount) > 0
+          ? (parseInt(errorCount) / parseInt(totalCount)) * 100
+          : 0;
 
       return {
         circuitBreakers: circuits,
@@ -254,36 +266,32 @@ export class HealthMonitor {
       void (async (): Promise<void> => {
         try {
           const health = await this.getHealthStatus();
-        
-        if (health.status !== 'healthy') {
-          logger.warn(
-            {
-              status: health.status,
-              services: Object.entries(health.services)
-                .filter(([_, service]) => service.status !== 'up')
-                .map(([name, service]) => ({
-                  name,
-                  status: service.status,
-                  error: service.error,
-                })),
-            },
-            'System health degraded'
-          );
-        }
 
-        // Store health status in Redis
-        await redis.setJSON('health:current', health, 300); // 5 min TTL
-        
+          if (health.status !== 'healthy') {
+            logger.warn(
+              {
+                status: health.status,
+                services: Object.entries(health.services)
+                  .filter(([_, service]) => service.status !== 'up')
+                  .map(([name, service]) => ({
+                    name,
+                    status: service.status,
+                    error: service.error,
+                  })),
+              },
+              'System health degraded'
+            );
+          }
+
+          // Store health status in Redis
+          await redis.setJSON('health:current', health, 300); // 5 min TTL
         } catch (error) {
           logger.error({ error }, 'Health check failed');
         }
       })();
     }, intervalMs);
 
-    logger.info(
-      { intervalMs },
-      'Started periodic health checks'
-    );
+    logger.info({ intervalMs }, 'Started periodic health checks');
   }
 }
 

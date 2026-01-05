@@ -21,7 +21,7 @@ export const DEFAULT_LOCK_OPTIONS: LockOptions = {
 
 export class LockError extends Error {
   public readonly key: string;
-  public readonly holder?: string;
+  public readonly holder: string | undefined;
 
   constructor(message: string, key: string, holder?: string) {
     super(message);
@@ -35,7 +35,7 @@ export class DistributedLock {
   private readonly key: string;
   private readonly value: string;
   private readonly options: LockOptions;
-  private refreshTimer?: NodeJS.Timer;
+  private refreshTimer: NodeJS.Timeout | undefined;
   private isReleased = false;
 
   constructor(key: string, options: Partial<LockOptions> = {}) {
@@ -54,13 +54,9 @@ export class DistributedLock {
     while (attempts < this.options.maxRetries) {
       try {
         // Try to acquire lock with SET NX
-        const acquired = await redis.getClient().set(
-          this.key,
-          this.value,
-          'PX',
-          this.options.ttl,
-          'NX'
-        );
+        const acquired = await redis
+          .getClient()
+          .set(this.key, this.value, 'PX', this.options.ttl, 'NX');
 
         if (acquired === 'OK') {
           logger.debug(
@@ -73,7 +69,10 @@ export class DistributedLock {
           );
 
           // Start auto-refresh if configured
-          if (this.options.refreshInterval && this.options.refreshInterval < this.options.ttl) {
+          if (
+            this.options.refreshInterval &&
+            this.options.refreshInterval < this.options.ttl
+          ) {
             this.startRefresh();
           }
 
@@ -82,7 +81,7 @@ export class DistributedLock {
 
         // Lock is held by someone else
         const currentHolder = await redis.get(this.key);
-        
+
         logger.debug(
           {
             key: this.key,
@@ -95,7 +94,6 @@ export class DistributedLock {
         // Wait before retrying
         await this.sleep(this.options.retryDelay);
         attempts++;
-        
       } catch (error) {
         logger.error(
           {
@@ -145,21 +143,15 @@ export class DistributedLock {
         end
       `;
 
-      const result = await redis.getClient().eval(
-        script,
-        1,
-        this.key,
-        this.value
-      ) as number;
+      const result = (await redis
+        .getClient()
+        .eval(script, 1, this.key, this.value)) as number;
 
       if (result === 1) {
         this.isReleased = true;
         logger.debug({ key: this.key }, 'Lock released');
       } else {
-        logger.warn(
-          { key: this.key },
-          'Lock was already released or expired'
-        );
+        logger.warn({ key: this.key }, 'Lock was already released or expired');
       }
     } catch (error) {
       logger.error(
@@ -169,10 +161,7 @@ export class DistributedLock {
         },
         'Error releasing lock'
       );
-      throw new LockError(
-        `Failed to release lock: ${String(error)}`,
-        this.key
-      );
+      throw new LockError(`Failed to release lock: ${String(error)}`, this.key);
     }
   }
 
@@ -192,19 +181,12 @@ export class DistributedLock {
         end
       `;
 
-      const result = await redis.getClient().eval(
-        script,
-        1,
-        this.key,
-        this.value,
-        newTtl
-      ) as number;
+      const result = (await redis
+        .getClient()
+        .eval(script, 1, this.key, this.value, newTtl)) as number;
 
       if (result === 1) {
-        logger.debug(
-          { key: this.key, ttl: newTtl },
-          'Lock extended'
-        );
+        logger.debug({ key: this.key, ttl: newTtl }, 'Lock extended');
       } else {
         throw new Error('Lock is no longer held');
       }
@@ -216,10 +198,7 @@ export class DistributedLock {
         },
         'Error extending lock'
       );
-      throw new LockError(
-        `Failed to extend lock: ${String(error)}`,
-        this.key
-      );
+      throw new LockError(`Failed to extend lock: ${String(error)}`, this.key);
     }
   }
 
@@ -243,7 +222,7 @@ export class DistributedLock {
             },
             'Failed to refresh lock'
           );
-          
+
           // Stop refreshing if we can't extend
           if (this.refreshTimer) {
             clearInterval(this.refreshTimer);
@@ -258,7 +237,7 @@ export class DistributedLock {
    * Sleep for specified milliseconds
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -288,7 +267,7 @@ export async function withLock<T>(
   options: Partial<LockOptions> = {}
 ): Promise<T> {
   const lock = new DistributedLock(key, options);
-  
+
   try {
     await lock.acquire();
     return await fn();
@@ -297,10 +276,7 @@ export async function withLock<T>(
       await lock.release();
     } catch (error) {
       // Log but don't throw - the operation succeeded
-      logger.error(
-        { error, key },
-        'Failed to release lock after operation'
-      );
+      logger.error({ error, key }, 'Failed to release lock after operation');
     }
   }
 }
@@ -318,10 +294,10 @@ export async function tryWithLock<T>(
     ...options,
     maxRetries: 0, // Don't retry
   });
-  
+
   try {
     await lock.acquire();
-    
+
     try {
       return await fn();
     } finally {
@@ -329,10 +305,7 @@ export async function tryWithLock<T>(
     }
   } catch (error) {
     if (error instanceof LockError) {
-      logger.debug(
-        { key },
-        'Lock is held, returning default value'
-      );
+      logger.debug({ key }, 'Lock is held, returning default value');
       return defaultValue;
     }
     throw error;

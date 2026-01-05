@@ -45,11 +45,11 @@ export interface WalletFingerprint {
     dataSource: 'subgraph' | 'data-api' | 'mixed' | 'cache';
   };
   analyzedAt: Date;
-  
+
   // Error tracking
   errorReason?: string;
   dataCompleteness: DataCompleteness;
-  
+
   // Confidence scoring based on data availability
   confidenceLevel: 'high' | 'medium' | 'low' | 'none';
 
@@ -104,7 +104,7 @@ class WalletForensicsService {
     tradeContext?: { tradeSizeUSD: number; marketOI: number }
   ): Promise<WalletFingerprint> {
     const normalizedAddress = address.toLowerCase().trim();
-    
+
     // Use distributed lock to prevent concurrent analysis of same wallet
     return await withLock(
       `wallet-analysis:${normalizedAddress}`,
@@ -131,7 +131,10 @@ class WalletForensicsService {
       const cached = await this.getCachedFingerprint(normalizedAddress);
       if (cached !== null) {
         logger.debug(
-          { address: normalizedAddress, cacheAge: Date.now() - cached.analyzedAt.getTime() },
+          {
+            address: normalizedAddress,
+            cacheAge: Date.now() - cached.analyzedAt.getTime(),
+          },
           'Wallet fingerprint cache hit'
         );
         return cached;
@@ -143,10 +146,7 @@ class WalletForensicsService {
       );
     }
 
-    logger.info(
-      { address: normalizedAddress },
-      'Analyzing wallet via APIs'
-    );
+    logger.info({ address: normalizedAddress }, 'Analyzing wallet via APIs');
 
     const dataCompleteness: DataCompleteness = {
       dataApi: false,
@@ -154,7 +154,7 @@ class WalletForensicsService {
       cache: false,
       timestamp: Date.now(),
     };
-    
+
     let dataApiData: DataApiUserData | null = null;
     let subgraphData: SubgraphWalletData | null = null;
     const errors: string[] = [];
@@ -167,13 +167,13 @@ class WalletForensicsService {
           'dataApi.getUserData'
         );
       });
-      
+
       dataCompleteness.dataApi = true;
-      
+
       // If Data API has data, use it preferentially
       if (dataApiData.activity || dataApiData.recentTrades.length > 0) {
         logger.info(
-          { 
+          {
             address: normalizedAddress,
             responseTime: Date.now() - startTime,
             hasActivity: !!dataApiData.activity,
@@ -192,7 +192,7 @@ class WalletForensicsService {
       const errorMsg = error instanceof Error ? error.message : String(error);
       errors.push(`Data API: ${errorMsg}`);
       logger.warn(
-        { 
+        {
           error: errorMsg,
           address: normalizedAddress,
           isCircuitOpen: errorMsg.includes('Circuit breaker'),
@@ -209,7 +209,7 @@ class WalletForensicsService {
           'subgraph.getWalletData'
         );
       });
-      
+
       dataCompleteness.subgraph = true;
 
       // If subgraph returned no data, create new user fingerprint
@@ -219,7 +219,7 @@ class WalletForensicsService {
         !subgraphData.positions
       ) {
         logger.info(
-          { 
+          {
             address: normalizedAddress,
             responseTime: Date.now() - startTime,
           },
@@ -333,10 +333,12 @@ class WalletForensicsService {
       normalizedAddress,
       errors.join('; '),
       dataCompleteness,
-      subgraphData || dataApiData ? { 
-        activity: subgraphData?.activity || undefined,
-        clobActivity: subgraphData?.clobActivity || undefined,
-      } : undefined
+      subgraphData || dataApiData
+        ? {
+            activity: subgraphData?.activity || null,
+            clobActivity: subgraphData?.clobActivity || null,
+          }
+        : undefined
     );
   }
 
@@ -541,7 +543,7 @@ class WalletForensicsService {
   /**
    * Create a partial fingerprint when some data is available
    */
-  private async createPartialFingerprint(
+  async createPartialFingerprint(
     address: string,
     partialData: Partial<SubgraphWalletData>,
     dataCompleteness: DataCompleteness,
@@ -631,11 +633,8 @@ class WalletForensicsService {
 
       return fingerprint;
     } catch (error) {
-      logger.error(
-        { error, address },
-        'Failed to create partial fingerprint'
-      );
-      
+      logger.error({ error, address }, 'Failed to create partial fingerprint');
+
       // Fall back to error fingerprint
       return this.createErrorFingerprint(
         address,
@@ -656,11 +655,15 @@ class WalletForensicsService {
     partialData?: Partial<SubgraphWalletData>
   ): WalletFingerprint {
     // Use any partial data we managed to collect
-    const tradeCount = partialData?.clobActivity?.tradeCount ?? 
-                      partialData?.activity?.tradeCount ?? 0;
-    const volumeUSD = partialData?.clobActivity?.totalVolumeUSD ?? 
-                     partialData?.activity?.totalVolumeUSD ?? 0;
-    
+    const tradeCount =
+      partialData?.clobActivity?.tradeCount ??
+      partialData?.activity?.tradeCount ??
+      0;
+    const volumeUSD =
+      partialData?.clobActivity?.totalVolumeUSD ??
+      partialData?.activity?.totalVolumeUSD ??
+      0;
+
     return {
       address,
       status: 'error' as FingerprintStatus,
