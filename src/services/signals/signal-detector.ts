@@ -85,7 +85,6 @@ class SignalDetector {
     trade: PolymarketTrade
   ): Promise<TradeSignal | null> {
     try {
-
       // Track total trades analyzed
       await this.incrementStat('trades_analyzed');
 
@@ -104,7 +103,7 @@ class SignalDetector {
       const impactResult = await this.oiCalculator.calculateImpactPercentage(
         tradeUsdValue,
         trade.side,
-        marketData.assetId as string,
+        trade.marketId,
         parseFloat(marketData.openInterest)
       );
 
@@ -318,22 +317,6 @@ class SignalDetector {
       logger.error({ error, marketId }, 'Failed to get market data');
       return null;
     }
-  }
-
-  /**
-   * Calculate OI percentage
-   * @param tradeUsdValue - Trade value in USD (shares * price)
-   * @param openInterest - Market liquidity in USD
-   */
-  private calculateOiPercentage(
-    tradeUsdValue: number,
-    openInterest: number
-  ): number {
-    if (openInterest === 0) {
-      return 0;
-    }
-
-    return (tradeUsdValue / openInterest) * 100;
   }
 
   /**

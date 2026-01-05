@@ -157,15 +157,18 @@ export function getThresholds(): DetectionThresholds {
       DEFAULT_THRESHOLDS.subgraphCacheTTLHours,
 
     // OI Calculation Method Configuration
-    oiCalculationMethod:
-      (process.env['OI_CALCULATION_METHOD'] as 'oi' | 'liquidity' | 'volume') ??
-      DEFAULT_THRESHOLDS.oiCalculationMethod,
+    oiCalculationMethod: ['oi', 'liquidity', 'volume'].includes(
+      process.env['OI_CALCULATION_METHOD'] ?? ''
+    )
+      ? (process.env['OI_CALCULATION_METHOD'] as 'oi' | 'liquidity' | 'volume')
+      : DEFAULT_THRESHOLDS.oiCalculationMethod,
     minLiquidityImpactPercentage:
       Number(process.env['MIN_LIQUIDITY_IMPACT_PERCENTAGE']) ||
       DEFAULT_THRESHOLDS.minLiquidityImpactPercentage,
     fallbackToOiCalculation:
       process.env['FALLBACK_TO_OI_CALCULATION'] === 'true' ||
-      (process.env['FALLBACK_TO_OI_CALCULATION'] !== 'false' && DEFAULT_THRESHOLDS.fallbackToOiCalculation),
+      (process.env['FALLBACK_TO_OI_CALCULATION'] !== 'false' &&
+        DEFAULT_THRESHOLDS.fallbackToOiCalculation),
     fallbackOiPercentage:
       Number(process.env['FALLBACK_OI_PERCENTAGE']) ||
       DEFAULT_THRESHOLDS.fallbackOiPercentage,
