@@ -262,10 +262,10 @@ export class OiCalculationService {
       }
 
       // Cache the orderbook data
-      await this.redis.setex(
+      await this.redis.set(
         cacheKey,
-        thresholds.orderbookCacheTtlSeconds,
-        JSON.stringify(response.data)
+        JSON.stringify(response.data),
+        thresholds.orderbookCacheTtlSeconds
       );
 
       return this.calculateLiquidityFromOrderbook(response.data, tradeSide);
@@ -395,7 +395,7 @@ export class OiCalculationService {
       };
 
       // Cache for 5 minutes
-      await this.redis.setex(cacheKey, 300, JSON.stringify(volumeData));
+      await this.redis.set(cacheKey, JSON.stringify(volumeData), 300);
 
       return volumeData;
     } catch (error) {
