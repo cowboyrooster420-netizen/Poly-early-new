@@ -36,14 +36,47 @@ interface OrderBookLevel {
   size: string;
 }
 
-interface TradeResponse {
-  size: string;
-  price: string;
+// Data API trade response
+interface DataApiTrade {
+  proxyWallet: string;
+  side: 'BUY' | 'SELL';
+  asset: string;
+  conditionId: string;
+  size: number;
+  price: number;
+  timestamp: number;
+  title: string;
+  slug: string;
+  outcome: string;
+  transactionHash: string;
 }
 
 export class OiCalculationService {
   private redis = redis;
   private env = getEnv();
+
+  /**
+   * Fetch current open interest from Data API
+   */
+  async fetchOpenInterest(marketId: string): Promise<number | null> {
+    try {
+      const response = await axios.get<
+        Array<{ market: string; value: number }>
+      >('https://data-api.polymarket.com/oi', {
+        timeout: 5000,
+        headers: {
+          'User-Agent': 'polymarket-insider-bot/1.0',
+        },
+      });
+
+      // Find the market in the response
+      const marketOI = response.data.find((item) => item.market === marketId);
+      return marketOI ? marketOI.value : null;
+    } catch (error) {
+      logger.warn({ error, marketId }, 'Failed to fetch OI from Data API');
+      return null;
+    }
+  }
 
   async calculateImpactPercentage(
     tradeUsdValue: number,
@@ -392,14 +425,15 @@ export class OiCalculationService {
       const endTime = Math.floor(Date.now() / 1000);
       const startTime = endTime - thresholds.volumeLookbackHours * 3600;
 
-      // Fetch from Polymarket API
-      const response = await axios.get<TradeResponse[]>(
-        `${this.env.POLYMARKET_API_URL}/trades`,
+      // Fetch from Data API instead of CLOB
+      const response = await axios.get<DataApiTrade[]>(
+        'https://data-api.polymarket.com/trades',
         {
           params: {
-            market_id: marketId,
-            start_ts: startTime,
-            end_ts: endTime,
+            market: marketId,
+            after: startTime.toString(),
+            before: endTime.toString(),
+            limit: 500,
           },
           timeout: 15000,
           headers: {
@@ -418,8 +452,8 @@ export class OiCalculationService {
 
       // Calculate volume metrics
       const trades = response.data;
-      const volumeNh = trades.reduce((total: number, trade: TradeResponse) => {
-        return total + parseFloat(trade.size) * parseFloat(trade.price);
+      const volumeNh = trades.reduce((total: number, trade: DataApiTrade) => {
+        return total + trade.size * trade.price;
       }, 0);
 
       // Get 24h volume for comparison (if different from lookback period)
@@ -449,13 +483,13 @@ export class OiCalculationService {
       const endTime = Math.floor(Date.now() / 1000);
       const startTime = endTime - 24 * 3600; // 24 hours
 
-      const response = await axios.get<TradeResponse[]>(
-        `${this.env.POLYMARKET_API_URL}/trades`,
+      const response = await axios.get<DataApiTrade[]>(
+        'https://data-api.polymarket.com/trades',
         {
           params: {
-            market_id: marketId,
-            start_ts: startTime,
-            end_ts: endTime,
+            market: marketId,
+            after: startTime.toString(),
+            before: endTime.toString(),
           },
           timeout: 10000,
         }
@@ -465,8 +499,8 @@ export class OiCalculationService {
         return 0;
       }
 
-      return response.data.reduce((total: number, trade: TradeResponse) => {
-        return total + parseFloat(trade.size) * parseFloat(trade.price);
+      return response.data.reduce((total: number, trade: DataApiTrade) => {
+        return total + trade.size * trade.price;
       }, 0);
     } catch (error) {
       logger.warn({ error, marketId }, 'Failed to fetch 24h volume data');

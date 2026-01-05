@@ -294,6 +294,9 @@ class SignalDetector {
         return cached;
       }
 
+      // Try to get fresh OI from Data API
+      const freshOI = await this.oiCalculator.fetchOpenInterest(marketId);
+
       // Fallback to database
       const prisma = db.getClient();
       const market = await prisma.market.findUnique({
@@ -301,13 +304,16 @@ class SignalDetector {
         select: { openInterest: true, volume: true },
       });
 
-      if (market === null) {
+      if (market === null && freshOI === null) {
         return null;
       }
 
       const data = {
-        openInterest: market.openInterest.toString(),
-        volume: market.volume.toString(),
+        openInterest:
+          freshOI !== null
+            ? freshOI.toString()
+            : market?.openInterest.toString() || '0',
+        volume: market?.volume.toString() || '0',
       };
 
       // Cache for 5 minutes
