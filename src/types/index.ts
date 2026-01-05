@@ -55,7 +55,10 @@ export interface TradeSignal {
   walletAddress: string;
   tradeSize: string;
   openInterest: string;
-  oiPercentage: number;
+  oiPercentage: number; // Backwards compatibility - same as impactPercentage
+  impactPercentage: number; // New field - actual impact percentage
+  impactMethod: string; // 'liquidity', 'volume', or 'oi'
+  impactThreshold: number; // Threshold used for this calculation
   priceImpact: number;
   priceBeforeTrade: string;
   priceAfterTrade: string;

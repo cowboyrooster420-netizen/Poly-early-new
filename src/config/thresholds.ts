@@ -7,6 +7,16 @@ export interface DetectionThresholds {
   minOiPercentage: number; // Min % of OI for a trade to be significant (default: 20)
   minPriceImpact: number; // Min % price move for a trade to be significant (default: 20)
 
+  // OI Calculation Method Configuration
+  oiCalculationMethod: 'oi' | 'liquidity' | 'volume'; // Method for calculating impact (default: liquidity)
+  minLiquidityImpactPercentage: number; // Min % of available liquidity consumed (default: 2.0)
+  fallbackToOiCalculation: boolean; // Fallback to OI method if liquidity unavailable (default: true)
+  fallbackOiPercentage: number; // OI threshold when using fallback (default: 0.5)
+  minVolumeImpactPercentage: number; // Min % of recent volume (default: 5.0)
+  volumeLookbackHours: number; // Hours to look back for volume calculation (default: 24)
+  orderbookDepthLevels: number; // Number of orderbook levels to analyze (default: 10)
+  orderbookCacheTtlSeconds: number; // Cache TTL for orderbook data (default: 30)
+
   // Dormancy thresholds
   dormantHoursNoLargeTrades: number; // Hours without large trades (default: 4)
   dormantHoursNoPriceMoves: number; // Hours without price moves (default: 3)
@@ -41,6 +51,16 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
   // Trade size
   minOiPercentage: 20,
   minPriceImpact: 20,
+
+  // OI Calculation Method
+  oiCalculationMethod: 'liquidity',
+  minLiquidityImpactPercentage: 2.0,
+  fallbackToOiCalculation: true,
+  fallbackOiPercentage: 0.5,
+  minVolumeImpactPercentage: 5.0,
+  volumeLookbackHours: 24,
+  orderbookDepthLevels: 10,
+  orderbookCacheTtlSeconds: 30,
 
   // Dormancy
   dormantHoursNoLargeTrades: 4,
@@ -135,5 +155,31 @@ export function getThresholds(): DetectionThresholds {
     subgraphCacheTTLHours:
       Number(process.env['SUBGRAPH_CACHE_TTL_HOURS']) ||
       DEFAULT_THRESHOLDS.subgraphCacheTTLHours,
+
+    // OI Calculation Method Configuration
+    oiCalculationMethod:
+      (process.env['OI_CALCULATION_METHOD'] as 'oi' | 'liquidity' | 'volume') ??
+      DEFAULT_THRESHOLDS.oiCalculationMethod,
+    minLiquidityImpactPercentage:
+      Number(process.env['MIN_LIQUIDITY_IMPACT_PERCENTAGE']) ||
+      DEFAULT_THRESHOLDS.minLiquidityImpactPercentage,
+    fallbackToOiCalculation:
+      process.env['FALLBACK_TO_OI_CALCULATION'] === 'true' ||
+      (process.env['FALLBACK_TO_OI_CALCULATION'] !== 'false' && DEFAULT_THRESHOLDS.fallbackToOiCalculation),
+    fallbackOiPercentage:
+      Number(process.env['FALLBACK_OI_PERCENTAGE']) ||
+      DEFAULT_THRESHOLDS.fallbackOiPercentage,
+    minVolumeImpactPercentage:
+      Number(process.env['MIN_VOLUME_IMPACT_PERCENTAGE']) ||
+      DEFAULT_THRESHOLDS.minVolumeImpactPercentage,
+    volumeLookbackHours:
+      Number(process.env['VOLUME_LOOKBACK_HOURS']) ||
+      DEFAULT_THRESHOLDS.volumeLookbackHours,
+    orderbookDepthLevels:
+      Number(process.env['ORDERBOOK_DEPTH_LEVELS']) ||
+      DEFAULT_THRESHOLDS.orderbookDepthLevels,
+    orderbookCacheTtlSeconds:
+      Number(process.env['ORDERBOOK_CACHE_TTL_SECONDS']) ||
+      DEFAULT_THRESHOLDS.orderbookCacheTtlSeconds,
   };
 }

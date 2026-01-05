@@ -4,6 +4,7 @@ import { getThresholds } from '../../config/thresholds.js';
 import { db } from '../database/prisma.js';
 import { redis } from '../cache/redis.js';
 import { logger } from '../../utils/logger.js';
+import { OiCalculationService } from '../analysis/oi-calculator.js';
 import type {
   PolymarketTrade,
   TradeSignal,
@@ -19,9 +20,11 @@ const STATS_KEY = 'stats:signal_detector';
  */
 class SignalDetector {
   private static instance: SignalDetector | null = null;
+  private oiCalculator: OiCalculationService;
 
   private constructor() {
     // Private constructor for singleton
+    this.oiCalculator = new OiCalculationService();
   }
 
   /**
@@ -82,7 +85,6 @@ class SignalDetector {
     trade: PolymarketTrade
   ): Promise<TradeSignal | null> {
     try {
-      const thresholds = getThresholds();
 
       // Track total trades analyzed
       await this.incrementStat('trades_analyzed');
@@ -98,24 +100,28 @@ class SignalDetector {
       // Calculate USD value (shares * price)
       const tradeUsdValue = parseFloat(trade.size) * parseFloat(trade.price);
 
-      // Calculate OI percentage using USD values
-      const oiPercentage = this.calculateOiPercentage(
+      // Calculate impact percentage using configured method (liquidity/volume/oi)
+      const impactResult = await this.oiCalculator.calculateImpactPercentage(
         tradeUsdValue,
+        trade.side,
+        marketData.assetId as string,
         parseFloat(marketData.openInterest)
       );
 
-      // Check if trade meets minimum OI threshold
-      if (oiPercentage < thresholds.minOiPercentage) {
+      // Check if trade meets minimum impact threshold
+      if (!impactResult.meetsThreshold) {
         logger.info(
           {
             tradeId: trade.id,
             tradeUsdValue: tradeUsdValue.toFixed(2),
             openInterest: marketData.openInterest,
-            oiPercentage: oiPercentage.toFixed(2),
-            threshold: thresholds.minOiPercentage,
-            reason: 'Below OI threshold',
+            impactPercentage: impactResult.impactPercentage.toFixed(2),
+            method: impactResult.method,
+            threshold: impactResult.threshold,
+            reason: `Below ${impactResult.method} threshold`,
+            details: impactResult.details,
           },
-          '🚫 Trade filtered: OI% too low'
+          `🚫 Trade filtered: ${impactResult.method} impact too low`
         );
         await this.incrementStat('filtered_oi_threshold');
         return null;
@@ -131,7 +137,10 @@ class SignalDetector {
         walletAddress: trade.taker, // The taker is the one initiating
         tradeSize: trade.size,
         openInterest: marketData.openInterest,
-        oiPercentage,
+        oiPercentage: impactResult.impactPercentage, // Backwards compatibility
+        impactPercentage: impactResult.impactPercentage,
+        impactMethod: impactResult.method,
+        impactThreshold: impactResult.threshold,
         priceImpact: 0, // Deprecated - not used in scoring
         priceBeforeTrade: '0',
         priceAfterTrade: trade.price,
@@ -146,9 +155,11 @@ class SignalDetector {
           marketId: trade.marketId,
           tradeUsdValue: tradeUsdValue.toFixed(2),
           openInterest: marketData.openInterest,
-          oiPercentage: oiPercentage.toFixed(2),
+          impactPercentage: impactResult.impactPercentage.toFixed(2),
+          method: impactResult.method,
+          threshold: impactResult.threshold,
         },
-        '🚨 Large trade detected'
+        `🚨 Large trade detected (${impactResult.method} impact: ${impactResult.impactPercentage.toFixed(2)}%)`
       );
 
       return signal;
