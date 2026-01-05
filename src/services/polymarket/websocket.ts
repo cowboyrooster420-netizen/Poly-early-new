@@ -5,25 +5,13 @@ import type { PolymarketTrade } from '../../types/index.js';
 import { logger } from '../../utils/logger.js';
 
 /**
- * Polymarket order book snapshot (sent as array)
- */
-interface PolymarketOrderBook {
-  market: string;
-  asset_id: string;
-  timestamp: string;
-  hash: string;
-  bids: Array<{ price: string; size: string }>;
-  asks: Array<{ price: string; size: string }>;
-}
-
-/**
  * Price change item within a price_change event
  */
 interface PriceChangeItem {
   asset_id: string;
   price: string;
   size: string;
-  side: string;
+  side: 'BUY' | 'SELL';
   hash: string;
   best_bid: string;
   best_ask: string;
@@ -31,11 +19,16 @@ interface PriceChangeItem {
 
 /**
  * Polymarket WebSocket message (object format)
- * Event types: price_change, trade, last_trade_price
+ * Event types: book, price_change, trade, tick_size_change
  */
 interface PolymarketMessage {
   market?: string;
-  event_type?: string;
+  event_type?:
+    | 'book'
+    | 'price_change'
+    | 'trade'
+    | 'tick_size_change'
+    | 'last_trade_price';
   timestamp?: string;
   error?: string;
   // For price_change events
@@ -44,9 +37,16 @@ interface PolymarketMessage {
   asset_id?: string;
   price?: string;
   size?: string;
-  side?: string;
+  side?: 'BUY' | 'SELL';
   maker_address?: string;
   taker_address?: string;
+  // For tick_size_change events
+  old_tick_size?: string;
+  new_tick_size?: string;
+  // For book events
+  bids?: Array<{ price: string; size: string }>;
+  asks?: Array<{ price: string; size: string }>;
+  hash?: string;
 }
 
 /**
@@ -177,9 +177,23 @@ class PolymarketWebSocketService {
    * Subscribe to a market's trade feed (adds to set, batched on connect)
    */
   public async subscribeToMarket(assetId: string): Promise<void> {
-    // Add to set - actual subscription happens via resubscribeToMarkets()
+    // Add to set
     this.subscribedMarkets.add(assetId);
-    logger.debug({ assetId }, 'Added asset to subscription queue');
+    logger.debug({ assetId }, 'Added asset to subscription set');
+
+    // If already connected, send subscribe message immediately
+    if (this.isConnected && this.ws) {
+      try {
+        const message = {
+          assets_ids: [assetId],
+          operation: 'subscribe',
+        };
+        this.ws.send(JSON.stringify(message));
+        logger.debug({ assetId }, 'Sent dynamic subscribe message');
+      } catch (error) {
+        logger.error({ error, assetId }, 'Failed to send subscribe message');
+      }
+    }
   }
 
   /**
@@ -192,26 +206,24 @@ class PolymarketWebSocketService {
   /**
    * Unsubscribe from a market's trade feed
    */
-  public async unsubscribeFromMarket(marketId: string): Promise<void> {
-    if (!this.isConnected || this.ws === null) {
-      logger.warn({ marketId }, 'Cannot unsubscribe: WebSocket not connected');
-      return;
-    }
+  public async unsubscribeFromMarket(assetId: string): Promise<void> {
+    // Remove from set
+    this.subscribedMarkets.delete(assetId);
+    logger.debug({ assetId }, 'Removed asset from subscription set');
 
-    try {
-      const message = {
-        type: 'unsubscribe',
-        market: marketId,
-        channel: 'trades',
-      };
-
-      this.ws.send(JSON.stringify(message));
-      this.subscribedMarkets.delete(marketId);
-
-      logger.info({ marketId }, 'Unsubscribed from market');
-    } catch (error) {
-      logger.error({ error, marketId }, 'Failed to unsubscribe from market');
-      throw error;
+    // If connected, send unsubscribe message
+    if (this.isConnected && this.ws) {
+      try {
+        const message = {
+          assets_ids: [assetId],
+          operation: 'unsubscribe',
+        };
+        this.ws.send(JSON.stringify(message));
+        logger.info({ assetId }, 'Sent unsubscribe message');
+      } catch (error) {
+        logger.error({ error, assetId }, 'Failed to send unsubscribe message');
+        throw error;
+      }
     }
   }
 
@@ -296,17 +308,9 @@ class PolymarketWebSocketService {
     try {
       const parsed = JSON.parse(rawMessage) as unknown;
 
-      // Array messages are order book snapshots
+      // Array messages are no longer used in new format
       if (Array.isArray(parsed)) {
-        for (const item of parsed) {
-          const book = item as PolymarketOrderBook;
-          if (book.bids || book.asks) {
-            logger.debug(
-              { market: book.market, assetId: book.asset_id },
-              'Order book update'
-            );
-          }
-        }
+        logger.debug('Received array message (legacy format)');
         return;
       }
 
@@ -321,7 +325,19 @@ class PolymarketWebSocketService {
 
         const eventType = msg.event_type;
 
-        if (eventType === 'price_change' && msg.price_changes) {
+        if (eventType === 'book') {
+          // Orderbook snapshot
+          logger.debug(
+            {
+              market: msg.market,
+              assetId: msg.asset_id,
+              timestamp: msg.timestamp,
+              bidLevels: msg.bids?.length || 0,
+              askLevels: msg.asks?.length || 0,
+            },
+            'Orderbook snapshot'
+          );
+        } else if (eventType === 'price_change' && msg.price_changes) {
           // Price changes - these represent order book changes, not actual trades
           for (const change of msg.price_changes) {
             logger.debug(
@@ -329,6 +345,9 @@ class PolymarketWebSocketService {
                 assetId: change.asset_id,
                 price: change.price,
                 side: change.side,
+                newSize: change.size,
+                bestBid: change.best_bid,
+                bestAsk: change.best_ask,
               },
               'Price change'
             );
@@ -344,6 +363,18 @@ class PolymarketWebSocketService {
             'Processing trade event'
           );
           this.handleTradeMessage(msg);
+        } else if (eventType === 'tick_size_change') {
+          // Tick size change event
+          logger.info(
+            {
+              market: msg.market,
+              assetId: msg.asset_id,
+              oldTickSize: msg.old_tick_size,
+              newTickSize: msg.new_tick_size,
+              side: msg.side,
+            },
+            'Market tick size changed'
+          );
         } else if (eventType) {
           logger.debug({ eventType, market: msg.market }, 'Other event type');
         }
@@ -520,8 +551,7 @@ class PolymarketWebSocketService {
       // Polymarket expects all asset IDs in a single subscribe message
       const assetIds = Array.from(this.subscribedMarkets);
       const message = {
-        auth: null,
-        type: 'market',
+        type: 'MARKET',
         assets_ids: assetIds,
       };
 
