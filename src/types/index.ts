@@ -49,6 +49,15 @@ export interface OrderBookLevel {
 // Signal Detection Types
 // ============================================================================
 
+export type FingerprintStatus = 'success' | 'error' | 'partial' | 'unknown';
+
+export interface DataCompleteness {
+  dataApi: boolean;
+  subgraph: boolean;
+  cache: boolean;
+  timestamp: number;
+}
+
 export interface TradeSignal {
   tradeId: string;
   marketId: string;

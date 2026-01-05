@@ -330,10 +330,39 @@ class TradeService {
         }
       );
 
+      // Check fingerprint status
+      if (walletFingerprint.status === 'error') {
+        logger.error(
+          {
+            wallet: trade.taker.substring(0, 10) + '...',
+            errorReason: walletFingerprint.errorReason,
+            dataCompleteness: walletFingerprint.dataCompleteness,
+          },
+          '❌ Wallet fingerprint analysis failed'
+        );
+        
+        // Skip this trade - we can't properly analyze without wallet data
+        await signalDetector.incrementStat('filtered_fingerprint_error');
+        return;
+      }
+      
+      if (walletFingerprint.status === 'partial') {
+        logger.warn(
+          {
+            wallet: trade.taker.substring(0, 10) + '...',
+            dataCompleteness: walletFingerprint.dataCompleteness,
+            confidenceLevel: walletFingerprint.confidenceLevel,
+          },
+          '⚠️  Wallet fingerprint analysis returned partial data'
+        );
+      }
+
       logger.info(
         {
           wallet: trade.taker.substring(0, 10) + '...',
+          status: walletFingerprint.status,
           isSuspicious: walletFingerprint.isSuspicious,
+          confidenceLevel: walletFingerprint.confidenceLevel,
           dataSource: walletFingerprint.subgraphMetadata.dataSource,
           subgraphFlags: walletFingerprint.subgraphFlags,
           tradeCount: walletFingerprint.subgraphMetadata.polymarketTradeCount,

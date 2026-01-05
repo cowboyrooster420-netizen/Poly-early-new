@@ -10,6 +10,10 @@ import { redis } from '../cache/redis.js';
 import { db, type PrismaClient } from '../database/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { getThresholds } from '../../config/thresholds.js';
+import type { FingerprintStatus, DataCompleteness } from '../../types/index.js';
+import { retryApiCall } from '../../utils/retry.js';
+import { circuitBreakers } from '../../utils/circuit-breaker.js';
+import { withLock } from '../../utils/distributed-lock.js';
 
 const thresholds = getThresholds();
 
@@ -30,6 +34,7 @@ export interface SubgraphFlags {
  */
 export interface WalletFingerprint {
   address: string;
+  status: FingerprintStatus;
   isSuspicious: boolean;
   subgraphFlags: SubgraphFlags;
   subgraphMetadata: {
@@ -37,9 +42,16 @@ export interface WalletFingerprint {
     polymarketVolumeUSD: number;
     polymarketAccountAgeDays: number | null;
     maxPositionConcentration: number;
-    dataSource: 'subgraph';
+    dataSource: 'subgraph' | 'data-api' | 'mixed' | 'cache';
   };
   analyzedAt: Date;
+  
+  // Error tracking
+  errorReason?: string;
+  dataCompleteness: DataCompleteness;
+  
+  // Confidence scoring based on data availability
+  confidenceLevel: 'high' | 'medium' | 'low' | 'none';
 
   // Backwards compatibility - map subgraph flags to old structure
   flags: {
@@ -92,52 +104,125 @@ class WalletForensicsService {
     tradeContext?: { tradeSizeUSD: number; marketOI: number }
   ): Promise<WalletFingerprint> {
     const normalizedAddress = address.toLowerCase().trim();
+    
+    // Use distributed lock to prevent concurrent analysis of same wallet
+    return await withLock(
+      `wallet-analysis:${normalizedAddress}`,
+      async () => this.analyzeWalletInternal(normalizedAddress, tradeContext),
+      {
+        ttl: 60000, // 60 second lock
+        maxRetries: 100, // Wait up to 10 seconds
+        retryDelay: 100,
+      }
+    );
+  }
+
+  /**
+   * Internal wallet analysis implementation
+   */
+  private async analyzeWalletInternal(
+    normalizedAddress: string,
+    tradeContext?: { tradeSizeUSD: number; marketOI: number }
+  ): Promise<WalletFingerprint> {
+    const startTime = Date.now();
 
     // Check cache first
-    const cached = await this.getCachedFingerprint(normalizedAddress);
-    if (cached !== null) {
-      logger.debug(
-        { address: normalizedAddress },
-        'Wallet fingerprint cache hit'
+    try {
+      const cached = await this.getCachedFingerprint(normalizedAddress);
+      if (cached !== null) {
+        logger.debug(
+          { address: normalizedAddress, cacheAge: Date.now() - cached.analyzedAt.getTime() },
+          'Wallet fingerprint cache hit'
+        );
+        return cached;
+      }
+    } catch (cacheError) {
+      logger.warn(
+        { error: cacheError, address: normalizedAddress },
+        'Cache check failed, proceeding with analysis'
       );
-      return cached;
     }
 
     logger.info(
       { address: normalizedAddress },
-      'Analyzing wallet via subgraph'
+      'Analyzing wallet via APIs'
     );
 
-    try {
-      // Try Data API first (more reliable)
-      const dataApiData =
-        await polymarketDataApi.getUserData(normalizedAddress);
+    const dataCompleteness: DataCompleteness = {
+      dataApi: false,
+      subgraph: false,
+      cache: false,
+      timestamp: Date.now(),
+    };
+    
+    let dataApiData: DataApiUserData | null = null;
+    let subgraphData: SubgraphWalletData | null = null;
+    const errors: string[] = [];
 
+    // Try Data API first with circuit breaker and retry
+    try {
+      dataApiData = await circuitBreakers.dataApi.execute(async () => {
+        return await retryApiCall(
+          () => polymarketDataApi.getUserData(normalizedAddress),
+          'dataApi.getUserData'
+        );
+      });
+      
+      dataCompleteness.dataApi = true;
+      
       // If Data API has data, use it preferentially
       if (dataApiData.activity || dataApiData.recentTrades.length > 0) {
         logger.info(
-          { address: normalizedAddress },
+          { 
+            address: normalizedAddress,
+            responseTime: Date.now() - startTime,
+            hasActivity: !!dataApiData.activity,
+            tradeCount: dataApiData.recentTrades.length,
+          },
           'Using Data API for wallet analysis'
         );
         return this.analyzeViaDataApi(
           normalizedAddress,
           dataApiData,
-          tradeContext
+          tradeContext,
+          dataCompleteness
         );
       }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      errors.push(`Data API: ${errorMsg}`);
+      logger.warn(
+        { 
+          error: errorMsg,
+          address: normalizedAddress,
+          isCircuitOpen: errorMsg.includes('Circuit breaker'),
+        },
+        'Data API failed, falling back to subgraph'
+      );
+    }
 
-      // Fallback to subgraph
-      const subgraphData =
-        await polymarketSubgraph.getWalletData(normalizedAddress);
+    // Try Subgraph as fallback with circuit breaker and retry
+    try {
+      subgraphData = await circuitBreakers.subgraph.execute(async () => {
+        return await retryApiCall(
+          () => polymarketSubgraph.getWalletData(normalizedAddress),
+          'subgraph.getWalletData'
+        );
+      });
+      
+      dataCompleteness.subgraph = true;
 
-      // If subgraph returned no data, create minimal fingerprint
+      // If subgraph returned no data, create new user fingerprint
       if (
         !subgraphData.activity &&
         !subgraphData.clobActivity &&
         !subgraphData.positions
       ) {
         logger.info(
-          { address: normalizedAddress },
+          { 
+            address: normalizedAddress,
+            responseTime: Date.now() - startTime,
+          },
           'No data found in either API - new user'
         );
         return this.createNewUserFingerprint(normalizedAddress, tradeContext);
@@ -177,7 +262,10 @@ class WalletForensicsService {
 
       const fingerprint: WalletFingerprint = {
         address: normalizedAddress,
+        status: 'success' as FingerprintStatus,
         isSuspicious,
+        dataCompleteness,
+        confidenceLevel: 'high', // High confidence from subgraph
         subgraphFlags,
         subgraphMetadata: {
           polymarketTradeCount: tradeCount,
@@ -214,28 +302,42 @@ class WalletForensicsService {
       logger.info(
         {
           address: normalizedAddress,
+          status: 'success',
+          responseTime: Date.now() - startTime,
           isSuspicious,
           subgraphFlags,
           tradeCount,
           volumeUSD,
           accountAgeDays,
         },
-        'Wallet analysis complete'
+        'Wallet analysis complete via subgraph'
       );
 
       return fingerprint;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      errors.push(`Subgraph: ${errorMsg}`);
       logger.error(
         {
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMsg,
           address: normalizedAddress,
+          responseTime: Date.now() - startTime,
+          dataCompleteness,
         },
-        'Failed to analyze wallet'
+        'Both APIs failed'
       );
-
-      // Return minimal fingerprint on error
-      return this.createNewUserFingerprint(normalizedAddress, tradeContext);
     }
+
+    // Both APIs failed - return error fingerprint
+    return this.createErrorFingerprint(
+      normalizedAddress,
+      errors.join('; '),
+      dataCompleteness,
+      subgraphData || dataApiData ? { 
+        activity: subgraphData?.activity || undefined,
+        clobActivity: subgraphData?.clobActivity || undefined,
+      } : undefined
+    );
   }
 
   /**
@@ -333,7 +435,8 @@ class WalletForensicsService {
   private async analyzeViaDataApi(
     address: string,
     data: DataApiUserData,
-    tradeContext?: { tradeSizeUSD: number; marketOI: number }
+    tradeContext?: { tradeSizeUSD: number; marketOI: number },
+    dataCompleteness?: DataCompleteness
   ): Promise<WalletFingerprint> {
     const activity = data.activity;
     const metrics = polymarketDataApi.calculateWalletMetrics(data);
@@ -378,14 +481,22 @@ class WalletForensicsService {
 
     const fingerprint: WalletFingerprint = {
       address: address.toLowerCase(),
+      status: 'success' as FingerprintStatus,
       isSuspicious,
+      dataCompleteness: dataCompleteness || {
+        dataApi: true,
+        subgraph: false,
+        cache: false,
+        timestamp: Date.now(),
+      },
+      confidenceLevel: 'high', // High confidence from Data API
       subgraphFlags: flags,
       subgraphMetadata: {
         polymarketTradeCount: activity?.totalTrades || 0,
         polymarketVolumeUSD: parseFloat(activity?.totalVolume || '0'),
         polymarketAccountAgeDays: accountAgeDays,
         maxPositionConcentration: 0, // Data API doesn't provide this directly
-        dataSource: 'subgraph',
+        dataSource: 'data-api',
       },
       analyzedAt: new Date(),
       // Backwards compatibility
@@ -428,6 +539,171 @@ class WalletForensicsService {
   }
 
   /**
+   * Create a partial fingerprint when some data is available
+   */
+  private async createPartialFingerprint(
+    address: string,
+    partialData: Partial<SubgraphWalletData>,
+    dataCompleteness: DataCompleteness,
+    tradeContext?: { tradeSizeUSD: number; marketOI: number }
+  ): Promise<WalletFingerprint> {
+    try {
+      // Calculate what we can from partial data
+      const subgraphFlags = this.calculateSubgraphFlags(
+        partialData as SubgraphWalletData, // Type assertion is safe due to our checks
+        tradeContext
+      );
+
+      const clobActivity = partialData.clobActivity;
+      const splitActivity = partialData.activity;
+
+      // Combined metrics from whatever data we have
+      const tradeCount =
+        (clobActivity?.tradeCount ?? 0) + (splitActivity?.tradeCount ?? 0);
+      const volumeUSD =
+        (clobActivity?.totalVolumeUSD ?? 0) +
+        (splitActivity?.totalVolumeUSD ?? 0);
+
+      // Account age
+      let accountAgeDays: number | null = null;
+      const firstTrade =
+        clobActivity?.firstTradeTimestamp ?? splitActivity?.firstTradeTimestamp;
+      if (firstTrade) {
+        accountAgeDays = Math.floor(
+          (Date.now() - firstTrade) / (1000 * 60 * 60 * 24)
+        );
+      }
+
+      // Determine if suspicious with lower confidence
+      const suspiciousFlagCount =
+        Object.values(subgraphFlags).filter(Boolean).length;
+      const isSuspicious = suspiciousFlagCount >= 3; // Higher threshold for partial data
+
+      const fingerprint: WalletFingerprint = {
+        address,
+        status: 'partial' as FingerprintStatus,
+        isSuspicious,
+        dataCompleteness,
+        confidenceLevel: 'low', // Low confidence due to partial data
+        subgraphFlags,
+        subgraphMetadata: {
+          polymarketTradeCount: tradeCount,
+          polymarketVolumeUSD: volumeUSD,
+          polymarketAccountAgeDays: accountAgeDays,
+          maxPositionConcentration:
+            partialData.positions?.maxPositionPercentage ?? 0,
+          dataSource: dataCompleteness.cache ? 'cache' : 'mixed',
+        },
+        analyzedAt: new Date(),
+        // Backwards compatibility
+        flags: {
+          cexFunded: false,
+          lowTxCount: subgraphFlags.lowTradeCount,
+          youngWallet: subgraphFlags.youngAccount,
+          highPolymarketNetflow: true,
+          singlePurpose: subgraphFlags.highConcentration,
+        },
+        metadata: {
+          totalTransactions: tradeCount,
+          walletAgeDays: accountAgeDays ?? 0,
+          firstSeenTimestamp: firstTrade ? firstTrade * 1000 : null,
+          cexFundingSource: null,
+          cexFundingTimestamp: null,
+          polymarketNetflowPercentage: 100,
+          uniqueProtocolsInteracted: 1,
+        },
+      };
+
+      // Still try to cache partial results
+      await this.cacheFingerprint(address, fingerprint);
+      await this.persistFingerprint(fingerprint);
+
+      logger.info(
+        {
+          address,
+          status: 'partial',
+          dataCompleteness,
+          isSuspicious,
+          tradeCount,
+        },
+        'Created partial fingerprint from incomplete data'
+      );
+
+      return fingerprint;
+    } catch (error) {
+      logger.error(
+        { error, address },
+        'Failed to create partial fingerprint'
+      );
+      
+      // Fall back to error fingerprint
+      return this.createErrorFingerprint(
+        address,
+        'Failed to process partial data',
+        dataCompleteness,
+        partialData
+      );
+    }
+  }
+
+  /**
+   * Create an error fingerprint when analysis fails
+   */
+  private createErrorFingerprint(
+    address: string,
+    errorReason: string,
+    dataCompleteness: DataCompleteness,
+    partialData?: Partial<SubgraphWalletData>
+  ): WalletFingerprint {
+    // Use any partial data we managed to collect
+    const tradeCount = partialData?.clobActivity?.tradeCount ?? 
+                      partialData?.activity?.tradeCount ?? 0;
+    const volumeUSD = partialData?.clobActivity?.totalVolumeUSD ?? 
+                     partialData?.activity?.totalVolumeUSD ?? 0;
+    
+    return {
+      address,
+      status: 'error' as FingerprintStatus,
+      isSuspicious: false, // Don't flag as suspicious on errors
+      errorReason,
+      dataCompleteness,
+      confidenceLevel: 'none',
+      subgraphFlags: {
+        lowTradeCount: false,
+        youngAccount: false,
+        lowVolume: false,
+        highConcentration: false,
+        freshFatBet: false,
+      },
+      subgraphMetadata: {
+        polymarketTradeCount: tradeCount,
+        polymarketVolumeUSD: volumeUSD,
+        polymarketAccountAgeDays: null,
+        maxPositionConcentration: 0,
+        dataSource: dataCompleteness.cache ? 'cache' : 'subgraph',
+      },
+      analyzedAt: new Date(),
+      // Backwards compatibility
+      flags: {
+        cexFunded: false,
+        lowTxCount: false,
+        youngWallet: false,
+        highPolymarketNetflow: false,
+        singlePurpose: false,
+      },
+      metadata: {
+        totalTransactions: tradeCount,
+        walletAgeDays: 0,
+        firstSeenTimestamp: null,
+        cexFundingSource: null,
+        cexFundingTimestamp: null,
+        polymarketNetflowPercentage: 0,
+        uniqueProtocolsInteracted: 0,
+      },
+    };
+  }
+
+  /**
    * Create fingerprint for new user with no history
    */
   private createNewUserFingerprint(
@@ -451,7 +727,15 @@ class WalletForensicsService {
 
     return {
       address,
+      status: 'success' as FingerprintStatus,
       isSuspicious,
+      dataCompleteness: {
+        dataApi: false,
+        subgraph: false, // No data means APIs were queried but returned nothing
+        cache: false,
+        timestamp: Date.now(),
+      },
+      confidenceLevel: freshFatBet ? 'high' : 'medium', // New users are medium confidence
       subgraphFlags,
       subgraphMetadata: {
         polymarketTradeCount: 0,

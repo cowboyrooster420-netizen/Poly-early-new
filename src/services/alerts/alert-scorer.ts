@@ -127,7 +127,16 @@ class AlertScorerService {
     const tradeUsdValue = tradeSignal.tradeUsdValue;
 
     // ----------------------------------
-    // 0. VALIDATE INPUTS (prevent NaN propagation)
+    // 0. CHECK FINGERPRINT STATUS
+    // ----------------------------------
+    if ('status' in walletFingerprint && walletFingerprint.status === 'error') {
+      // Can't score without wallet data
+      await this.incrementStat('filtered_fingerprint_error');
+      return this.createIgnoreResult('Wallet analysis failed');
+    }
+
+    // ----------------------------------
+    // 1. VALIDATE INPUTS (prevent NaN propagation)
     // ----------------------------------
     if (isNaN(openInterest) || openInterest <= 0) {
       return this.createIgnoreResult(
@@ -216,15 +225,35 @@ class AlertScorerService {
       walletContribution + oiContribution + extremityContribution;
 
     // ----------------------------------
-    // 5. CLASSIFICATION
+    // 5. ADJUST FOR FINGERPRINT CONFIDENCE
     // ----------------------------------
-    const classification = this.classify(finalScore);
+    let adjustedScore = finalScore;
+    let confidenceAdjustment = 1.0;
+    
+    if ('status' in walletFingerprint && walletFingerprint.status === 'partial') {
+      // Reduce score for partial data
+      confidenceAdjustment = 0.8;
+      adjustedScore = finalScore * confidenceAdjustment;
+      logger.debug(
+        { 
+          originalScore: finalScore,
+          adjustedScore,
+          confidenceLevel: walletFingerprint.confidenceLevel,
+        },
+        'Score adjusted for partial fingerprint data'
+      );
+    }
+
+    // ----------------------------------
+    // 6. CLASSIFICATION
+    // ----------------------------------
+    const classification = this.classify(adjustedScore);
 
     // Track classification results
     await this.incrementStat(`classification_${classification.toLowerCase()}`);
 
     const score: AlertScore = {
-      totalScore: Math.round(finalScore),
+      totalScore: Math.round(adjustedScore),
       breakdown: {
         walletScore: Math.round(walletScore100),
         oiScore: Math.round(oiScore),
