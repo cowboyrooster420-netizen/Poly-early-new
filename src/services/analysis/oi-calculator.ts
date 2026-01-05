@@ -49,7 +49,8 @@ export class OiCalculationService {
     tradeUsdValue: number,
     tradeSide: 'buy' | 'sell',
     marketId: string,
-    openInterest: number
+    openInterest: number,
+    outcome?: 'yes' | 'no'
   ): Promise<ImpactResult> {
     const thresholds = getThresholds();
     const method = thresholds.oiCalculationMethod;
@@ -61,7 +62,8 @@ export class OiCalculationService {
             tradeUsdValue,
             tradeSide,
             marketId,
-            openInterest
+            openInterest,
+            outcome
           );
 
         case 'volume':
@@ -99,12 +101,17 @@ export class OiCalculationService {
     tradeUsdValue: number,
     tradeSide: 'buy' | 'sell',
     marketId: string,
-    openInterest: number
+    openInterest: number,
+    outcome?: 'yes' | 'no'
   ): Promise<ImpactResult> {
     const thresholds = getThresholds();
 
     // Get current orderbook from Polymarket API
-    const liquidity = await this.getAvailableLiquidity(marketId, tradeSide);
+    const liquidity = await this.getAvailableLiquidity(
+      marketId,
+      tradeSide,
+      outcome
+    );
 
     if (!liquidity || liquidity.availableLiquidity <= 0) {
       if (thresholds.fallbackToOiCalculation) {
@@ -221,12 +228,43 @@ export class OiCalculationService {
 
   private async getAvailableLiquidity(
     marketId: string,
-    tradeSide: 'buy' | 'sell'
+    tradeSide: 'buy' | 'sell',
+    outcome?: 'yes' | 'no'
   ): Promise<LiquidityData | null> {
     const thresholds = getThresholds();
-    const cacheKey = `orderbook:${marketId}`;
 
     try {
+      // First, we need to get the market data to find the clob token IDs
+      const { db } = await import('../database/prisma.js');
+      const prisma = db.getClient();
+
+      const market = await prisma.market.findUnique({
+        where: { id: marketId },
+        select: {
+          clobTokenIdYes: true,
+          clobTokenIdNo: true,
+        },
+      });
+
+      if (!market) {
+        logger.warn({ marketId }, 'Market not found in database');
+        return null;
+      }
+
+      // Determine which token ID to use based on outcome
+      const tokenId =
+        outcome === 'no' ? market.clobTokenIdNo : market.clobTokenIdYes;
+
+      if (!tokenId) {
+        logger.warn(
+          { marketId, outcome },
+          'No CLOB token ID found for market/outcome'
+        );
+        return null;
+      }
+
+      const cacheKey = `orderbook:${tokenId}`;
+
       // Check cache first
       const cached = await this.redis.get(cacheKey);
       if (cached) {
@@ -241,13 +279,12 @@ export class OiCalculationService {
         }
       }
 
-      // Fetch from Polymarket CLOB API
+      // Fetch from Polymarket CLOB API with correct endpoint
       const response = await axios.get<OrderbookResponse>(
         `${this.env.POLYMARKET_API_URL}/book`,
         {
           params: {
-            token_id: marketId,
-            side: 'both',
+            token_id: tokenId,
           },
           timeout: 10000,
           headers: {
@@ -276,6 +313,9 @@ export class OiCalculationService {
             error: error.message,
             status: error.response?.status,
             marketId,
+            url: error.config?.url,
+            params: error.config?.params,
+            responseData: error.response?.data,
           },
           'Failed to fetch orderbook data'
         );
@@ -357,7 +397,7 @@ export class OiCalculationService {
         `${this.env.POLYMARKET_API_URL}/trades`,
         {
           params: {
-            market: marketId,
+            market_id: marketId,
             start_ts: startTime,
             end_ts: endTime,
           },
@@ -413,7 +453,7 @@ export class OiCalculationService {
         `${this.env.POLYMARKET_API_URL}/trades`,
         {
           params: {
-            market: marketId,
+            market_id: marketId,
             start_ts: startTime,
             end_ts: endTime,
           },

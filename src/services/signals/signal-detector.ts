@@ -104,7 +104,8 @@ class SignalDetector {
         tradeUsdValue,
         trade.side,
         trade.marketId,
-        parseFloat(marketData.openInterest)
+        parseFloat(marketData.openInterest),
+        trade.outcome
       );
 
       // Check if trade meets minimum impact threshold
