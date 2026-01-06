@@ -294,7 +294,13 @@ class AlertScorerService {
         tradeUsd: tradeUsdValue.toFixed(0),
         marketId: tradeSignal.marketId.slice(0, 8),
         outcome: tradeSignal.outcome,
-        entryProb: (entryProbability * 100).toFixed(1) + '%',
+        marketPrice: (entryProbability * 100).toFixed(1) + '%',
+        bettingOn:
+          (
+            (tradeSignal.outcome === 'yes'
+              ? entryProbability
+              : 1 - entryProbability) * 100
+          ).toFixed(1) + '%',
         totalScore: score.totalScore,
         classification,
         walletFlags: walletFingerprint.subgraphFlags,
@@ -505,37 +511,41 @@ class AlertScorerService {
       return { raw: 0, multiplier: 1.0, final: 0 };
     }
 
-    const p = entryProbability * 100; // Convert to percentage (YES side price)
+    // Calculate what probability they're betting on
+    const bettingOnProbability =
+      outcome === 'yes' ? entryProbability : 1 - entryProbability;
+    const bettingOnPercent = bettingOnProbability * 100;
 
-    // New extremity scoring bands
+    // Extremity scoring: High scores for contrarian bets (betting on <10% outcomes)
+    // Low/zero scores for consensus bets (betting on >90% outcomes)
     let rawScore = 0;
-    if (p < 2 || p > 98) {
-      rawScore = 60;
-    } else if (p < 5 || p > 95) {
-      rawScore = 45;
-    } else if (p < 10 || p > 90) {
-      rawScore = 30;
-    } else if (p < 15 || p > 85) {
-      rawScore = 15;
+
+    if (bettingOnPercent < 2) {
+      rawScore = 100; // Betting on <2% outcome = extremely contrarian
+    } else if (bettingOnPercent < 5) {
+      rawScore = 80; // Betting on 2-5% outcome = very contrarian
+    } else if (bettingOnPercent < 10) {
+      rawScore = 60; // Betting on 5-10% outcome = contrarian
+    } else if (bettingOnPercent < 20) {
+      rawScore = 40; // Betting on 10-20% outcome = moderately contrarian
+    } else if (bettingOnPercent < 35) {
+      rawScore = 25; // Betting on 20-35% outcome = somewhat interesting
+    } else if (bettingOnPercent > 95) {
+      rawScore = 0; // Betting on >95% outcome = consensus/farming
+    } else if (bettingOnPercent > 90) {
+      rawScore = 5; // Betting on 90-95% outcome = near consensus
+    } else if (bettingOnPercent > 80) {
+      rawScore = 10; // Betting on 80-90% outcome = strong favorite
+    } else {
+      rawScore = 15; // Betting on 35-80% outcome = moderate
     }
 
     if (rawScore === 0) {
       return { raw: 0, multiplier: 1.0, final: 0 };
     }
 
-    // Directionality multiplier
-    // Determine the implied probability of the side they're betting on
-    const targetProb =
-      outcome === 'yes' ? entryProbability : 1 - entryProbability;
-
-    let multiplier = 1.0;
-    if (targetProb < 0.5) {
-      // Betting on underdog - more suspicious
-      multiplier = 1.5;
-    } else if (targetProb > 0.5) {
-      // Betting on favorite - less suspicious ("nothing ever happens")
-      multiplier = 0.7;
-    }
+    // No additional multiplier needed - the scoring already captures contrarian behavior
+    const multiplier = 1.0;
 
     const finalScore = rawScore * multiplier;
 
