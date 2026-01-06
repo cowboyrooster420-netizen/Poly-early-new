@@ -3,6 +3,7 @@ import { getThresholds } from '../../config/thresholds.js';
 import axios, { AxiosError } from 'axios';
 import { getEnv } from '../../config/env.js';
 import { redis } from '../cache/redis.js';
+import { safeParseFloat, calculateUsdValue } from '../../utils/decimals.js';
 
 interface LiquidityData {
   availableLiquidity: number;
@@ -378,11 +379,15 @@ export class OiCalculationService {
 
     // Calculate liquidity for each side
     const bidLiquidity = bids.reduce((total: number, order: OrderBookLevel) => {
-      return total + parseFloat(order.size) * parseFloat(order.price);
+      const size = safeParseFloat(order.size);
+      const price = safeParseFloat(order.price);
+      return total + calculateUsdValue(size, price);
     }, 0);
 
     const askLiquidity = asks.reduce((total: number, order: OrderBookLevel) => {
-      return total + parseFloat(order.size) * parseFloat(order.price);
+      const size = safeParseFloat(order.size);
+      const price = safeParseFloat(order.price);
+      return total + calculateUsdValue(size, price);
     }, 0);
 
     // Available liquidity is the side we're trading against
@@ -390,8 +395,8 @@ export class OiCalculationService {
       tradeSide === 'buy' ? askLiquidity : bidLiquidity;
 
     // Calculate spread
-    const bestBid = parseFloat(bids[0]?.price || '0');
-    const bestAsk = parseFloat(asks[0]?.price || '0');
+    const bestBid = safeParseFloat(bids[0]?.price);
+    const bestAsk = safeParseFloat(asks[0]?.price);
     const spread = bestAsk - bestBid;
 
     return {
@@ -453,7 +458,8 @@ export class OiCalculationService {
       // Calculate volume metrics
       const trades = response.data;
       const volumeNh = trades.reduce((total: number, trade: DataApiTrade) => {
-        return total + trade.size * trade.price;
+        // Data API returns actual values (not scaled)
+        return total + calculateUsdValue(trade.size, trade.price);
       }, 0);
 
       // Get 24h volume for comparison (if different from lookback period)
@@ -500,7 +506,8 @@ export class OiCalculationService {
       }
 
       return response.data.reduce((total: number, trade: DataApiTrade) => {
-        return total + trade.size * trade.price;
+        // Data API returns actual values (not scaled)
+        return total + calculateUsdValue(trade.size, trade.price);
       }, 0);
     } catch (error) {
       logger.warn({ error, marketId }, 'Failed to fetch 24h volume data');

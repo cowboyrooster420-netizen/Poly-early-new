@@ -56,6 +56,8 @@ export interface DataCompleteness {
   subgraph: boolean;
   cache: boolean;
   timestamp: number;
+  validationScore?: number; // Cross-validation confidence (0-100)
+  hasDiscrepancies?: boolean; // Whether data sources disagree
 }
 
 export interface TradeSignal {
@@ -84,30 +86,11 @@ export interface DormancyMetrics {
   isDormant: boolean;
 }
 
-export interface WalletFingerprint {
-  address: string;
-  fundingSource: FundingSource | null;
-  transactionCount: number;
-  firstTransactionTimestamp: number | null;
-  lastTransactionTimestamp: number | null;
-  walletAgeInDays: number;
-  netflowToPolymarket: number;
-  netflowPercentage: number;
-  hasDefiActivity: boolean;
-  hasGamingActivity: boolean;
-  tokenDiversity: number;
-  matchesInsiderProfile: boolean;
-  score: number;
-}
+// Note: WalletFingerprint interface has been moved to src/services/blockchain/wallet-forensics.ts
+// It is now a more comprehensive interface with subgraph/data API flags
 
-export type FundingSource =
-  | 'coinbase'
-  | 'binance'
-  | 'kraken'
-  | 'gemini'
-  | 'okx'
-  | 'kucoin'
-  | 'unknown';
+// FundingSource type is no longer used (was part of old on-chain analysis)
+// Keeping for backwards compatibility in case of stored data
 
 export interface TimingWindow {
   name: string;
@@ -125,7 +108,7 @@ export interface Alert {
   marketQuestion: string;
   marketSlug: string;
   tradeSignal: TradeSignal;
-  walletFingerprint: WalletFingerprint;
+  walletFingerprint: any; // Using 'any' temporarily - actual type is in wallet-forensics.ts
   dormancyMetrics?: DormancyMetrics; // Optional - dormancy no longer used for signal gating
   timingWindows: TimingWindow[];
   confidenceScore: number;

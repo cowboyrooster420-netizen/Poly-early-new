@@ -2,6 +2,7 @@ import { polymarketSubgraph } from './subgraph-client.js';
 import { tradeService } from './trade-service.js';
 import { marketService } from './market-service.js';
 import { logger } from '../../utils/logger.js';
+import { usdcToUsd } from '../../utils/decimals.js';
 import type { PolymarketTrade } from '../../types/index.js';
 
 /**
@@ -239,12 +240,12 @@ class TradePollingService {
     // Calculate size and price
     // Size is the outcome token amount
     const outcomeAmount = takerSellingOutcome
-      ? parseFloat(subgraphTrade.takerAmountFilled) / 1e6
-      : parseFloat(subgraphTrade.makerAmountFilled) / 1e6;
+      ? usdcToUsd(subgraphTrade.takerAmountFilled)
+      : usdcToUsd(subgraphTrade.makerAmountFilled);
 
     const usdcAmount = takerSellingOutcome
-      ? parseFloat(subgraphTrade.makerAmountFilled) / 1e6
-      : parseFloat(subgraphTrade.takerAmountFilled) / 1e6;
+      ? usdcToUsd(subgraphTrade.makerAmountFilled)
+      : usdcToUsd(subgraphTrade.takerAmountFilled);
 
     // Validate amounts
     if (outcomeAmount <= 0 || usdcAmount < 0) {

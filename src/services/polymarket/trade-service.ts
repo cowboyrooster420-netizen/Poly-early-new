@@ -1,5 +1,4 @@
 import { Decimal } from '@prisma/client/runtime/library';
-import { AxiosError } from 'axios';
 
 import { db } from '../database/prisma.js';
 import { signalDetector } from '../signals/signal-detector.js';
@@ -8,7 +7,9 @@ import { polymarketSubgraph } from './subgraph-client.js';
 import { alertScorer } from '../alerts/alert-scorer.js';
 import { alertPersistence } from '../alerts/alert-persistence.js';
 import { marketService } from './market-service.js';
+import { redis } from '../cache/redis.js';
 import { logger } from '../../utils/logger.js';
+import { DecisionFramework } from '../data/decision-framework.js';
 import type { PolymarketTrade } from '../../types/index.js';
 
 /**
@@ -130,27 +131,51 @@ class TradeService {
             );
           }
         } catch (error) {
-          // Handle 404s and other errors from the wallet subgraph
-          if (error instanceof AxiosError && error.response?.status === 404) {
-            logger.debug(
-              { proxyAddress: taker },
-              'Wallet subgraph returned 404 - using address as-is'
-            );
-          } else if (error instanceof Error && error.message.includes('404')) {
-            logger.debug(
-              { proxyAddress: taker },
-              'Wallet subgraph returned 404 - using address as-is'
-            );
-          } else {
-            logger.warn(
-              {
-                error: error instanceof Error ? error.message : 'Unknown error',
-                proxyAddress: taker,
-              },
-              'Failed to resolve proxy wallet - using address as-is'
-            );
+          // Use decision framework for explicit error handling
+          const decision = DecisionFramework.handleProxyResolutionError(error, {
+            proxyAddress: taker,
+            tradeId: trade.id,
+            marketId: market.id,
+          });
+
+          await DecisionFramework.executeDecision(decision, {
+            onSkip: () => {
+              // Skip this trade entirely
+              return;
+            },
+            onProceed: () => {
+              // Continue with original address
+              // taker remains unchanged
+            },
+          });
+
+          // If decision was to skip, return early
+          if (decision.action === 'skip') {
+            return;
           }
-          // Continue with the original address
+
+          // Alert on high failure rate
+          if (
+            decision.severity === 'error' ||
+            decision.severity === 'critical'
+          ) {
+            const recentFailures = await redis.increment(
+              `proxy:failures:${(Date.now() / 60000) | 0}`
+            );
+            if (recentFailures === 1) {
+              await redis.expire(
+                `proxy:failures:${(Date.now() / 60000) | 0}`,
+                300
+              ); // 5 min TTL
+            }
+
+            if (recentFailures > 10) {
+              logger.error(
+                { recentFailures, minuteWindow: (Date.now() / 60000) | 0 },
+                '🚨 HIGH PROXY RESOLUTION FAILURE RATE - CHECK WALLET SUBGRAPH HEALTH'
+              );
+            }
+          }
         }
       } else {
         logger.warn(
@@ -330,31 +355,47 @@ class TradeService {
         }
       );
 
-      // Check fingerprint status
+      // Check fingerprint status using decision framework
       if (walletFingerprint.status === 'error') {
-        logger.error(
+        const decision = DecisionFramework.handleWalletAnalysisError(
+          new Error(
+            walletFingerprint.errorReason || 'Unknown wallet analysis error'
+          ),
           {
-            wallet: trade.taker.substring(0, 10) + '...',
-            errorReason: walletFingerprint.errorReason,
-            dataCompleteness: walletFingerprint.dataCompleteness,
-          },
-          '❌ Wallet fingerprint analysis failed'
+            address: trade.taker,
+            tradeId: trade.id,
+            dataSource: 'both', // Both subgraph and data API failed
+          }
         );
-        
-        // Skip this trade - we can't properly analyze without wallet data
-        await signalDetector.incrementStat('filtered_fingerprint_error');
+
+        await DecisionFramework.executeDecision(decision, {
+          onSkip: async () => {
+            await signalDetector.incrementStat('filtered_fingerprint_error');
+          },
+        });
+
+        // For wallet analysis errors, we always skip
         return;
       }
-      
+
       if (walletFingerprint.status === 'partial') {
-        logger.warn(
+        // Log partial data warning but proceed
+        const decision = DecisionFramework.handleWalletAnalysisError(
+          new Error('Partial wallet data'),
           {
-            wallet: trade.taker.substring(0, 10) + '...',
-            dataCompleteness: walletFingerprint.dataCompleteness,
-            confidenceLevel: walletFingerprint.confidenceLevel,
-          },
-          '⚠️  Wallet fingerprint analysis returned partial data'
+            address: trade.taker,
+            tradeId: trade.id,
+            dataSource: walletFingerprint.dataCompleteness.subgraph
+              ? 'data-api'
+              : 'subgraph',
+          }
         );
+
+        await DecisionFramework.executeDecision(decision, {
+          onProceed: () => {
+            // Continue with partial data
+          },
+        });
       }
 
       logger.info(

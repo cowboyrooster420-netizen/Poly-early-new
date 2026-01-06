@@ -5,6 +5,8 @@ import { db } from '../database/prisma.js';
 import { redis } from '../cache/redis.js';
 import { logger } from '../../utils/logger.js';
 import { OiCalculationService } from '../analysis/oi-calculator.js';
+import { safeParseFloat, calculateUsdValue } from '../../utils/decimals.js';
+import { DecisionFramework } from '../data/decision-framework.js';
 import type {
   PolymarketTrade,
   TradeSignal,
@@ -97,7 +99,10 @@ class SignalDetector {
       }
 
       // Calculate USD value (shares * price)
-      const tradeUsdValue = parseFloat(trade.size) * parseFloat(trade.price);
+      const tradeUsdValue = calculateUsdValue(
+        safeParseFloat(trade.size),
+        safeParseFloat(trade.price)
+      );
 
       // Calculate impact percentage using configured method (liquidity/volume/oi)
       const impactResult = await this.oiCalculator.calculateImpactPercentage(
@@ -305,6 +310,22 @@ class SignalDetector {
       });
 
       if (market === null && freshOI === null) {
+        // Both database and fresh OI failed - use decision framework
+        const decision = DecisionFramework.handleMarketDataError(
+          new Error('Market data not available'),
+          {
+            marketId,
+            dataType: 'info',
+            source: 'api',
+          }
+        );
+
+        await DecisionFramework.executeDecision(decision, {
+          onAbort: () => {
+            // Return null to indicate we cannot process this market
+          },
+        });
+
         return null;
       }
 

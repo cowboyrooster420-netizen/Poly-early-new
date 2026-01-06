@@ -42,6 +42,9 @@ export interface DetectionThresholds {
   subgraphFreshFatBetSizeUSD: number; // Min trade size for fresh+fat pattern (default: 20000)
   subgraphFreshFatBetMaxOI: number; // Max market OI for fresh+fat pattern (default: 500000)
   subgraphCacheTTLHours: number; // Cache TTL for subgraph data (default: 48)
+
+  // Error handling configuration
+  skipTradesOnProxyError: boolean; // Skip trades when proxy resolution fails with GraphQL errors (default: false)
 }
 
 /**
@@ -87,6 +90,9 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
   subgraphFreshFatBetSizeUSD: 20000,
   subgraphFreshFatBetMaxOI: 500000,
   subgraphCacheTTLHours: 48,
+
+  // Error handling
+  skipTradesOnProxyError: false,
 };
 
 /**
@@ -184,5 +190,10 @@ export function getThresholds(): DetectionThresholds {
     orderbookCacheTtlSeconds:
       Number(process.env['ORDERBOOK_CACHE_TTL_SECONDS']) ||
       DEFAULT_THRESHOLDS.orderbookCacheTtlSeconds,
+
+    // Error handling
+    skipTradesOnProxyError:
+      process.env['SKIP_TRADES_ON_PROXY_ERROR'] === 'true' ||
+      DEFAULT_THRESHOLDS.skipTradesOnProxyError,
   };
 }

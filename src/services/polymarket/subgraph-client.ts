@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance, AxiosError } from 'axios';
 import { logger } from '../../utils/logger.js';
+import { usdcToUsd } from '../../utils/decimals.js';
 
 /**
  * Polymarket Subgraph Endpoints (Goldsky-hosted)
@@ -10,9 +11,12 @@ const SUBGRAPH_ENDPOINTS = {
   positions:
     'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/positions-subgraph/0.0.7/gn',
   pnl: 'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/pnl-subgraph/0.0.14/gn',
-  // Orderbook subgraph for CLOB trades (OrderFilled/OrdersMatched events)
+  // Orders subgraph for CLOB trades (OrderFilled/OrdersMatched events)
   orderbook:
     'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/orderbook-subgraph/0.0.1/gn',
+  // Open Interest subgraph - NEW
+  openInterest:
+    'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/oi-subgraph/0.0.6/gn',
   // Wallet subgraph for proxy-to-signer mapping
   wallet:
     'https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/subgraphs/wallet-subgraph/0.0.1/gn',
@@ -99,9 +103,25 @@ interface ActivityQueryResponse {
   }>;
 }
 
+/**
+ * UserPosition from PNL subgraph
+ */
+interface SubgraphUserPosition {
+  id: string;
+  user: string;
+  conditionId: string;
+  amount0: string;
+  amount1: string;
+  lpShares: string;
+  netDeposits: string;
+  netWithdrawals: string;
+  realizedPnl: string;
+  unrealizedPnl: string;
+}
+
 interface PositionsQueryResponse {
   data?: {
-    splits: SubgraphSplit[];
+    userPositions: SubgraphUserPosition[];
   };
   errors?: Array<{
     message: string;
@@ -210,21 +230,24 @@ const USER_ACTIVITY_QUERY = `
 `;
 
 /**
- * GraphQL query for user positions
+ * GraphQL query for user positions from PNL subgraph
  */
 const USER_POSITIONS_QUERY = `
   query GetUserPositions($address: Bytes!) {
-    splits(
-      where: { stakeholder: $address }
-      orderBy: timestamp
-      orderDirection: desc
+    userPositions(
+      where: { user: $address }
       first: 500
     ) {
       id
-      amount
-      condition {
-        id
-      }
+      user
+      conditionId
+      amount0
+      amount1
+      lpShares
+      netDeposits
+      netWithdrawals
+      realizedPnl
+      unrealizedPnl
     }
   }
 `;
@@ -390,6 +413,7 @@ class PolymarketSubgraphClient {
   private readonly activityClient: AxiosInstance;
   private readonly orderbookClient: AxiosInstance;
   private readonly walletClient: AxiosInstance;
+  private readonly pnlClient: AxiosInstance;
   private readonly rateLimiter: SubgraphRateLimiter;
   private readonly maxRetries = 3;
   private readonly baseRetryDelay = 500;
@@ -409,6 +433,12 @@ class PolymarketSubgraphClient {
 
     this.walletClient = axios.create({
       baseURL: SUBGRAPH_ENDPOINTS.wallet,
+      timeout: 10000,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    this.pnlClient = axios.create({
+      baseURL: SUBGRAPH_ENDPOINTS.pnl,
       timeout: 10000,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -484,12 +514,10 @@ class PolymarketSubgraphClient {
 
         // Calculate total volume (amounts are in USDC with 6 decimals)
         const splitVolume = splits.reduce((sum, s) => {
-          const amount = parseFloat(s.amount || '0') / 1e6;
-          return sum + amount;
+          return sum + usdcToUsd(s.amount);
         }, 0);
         const mergeVolume = merges.reduce((sum, m) => {
-          const amount = parseFloat(m.amount || '0') / 1e6;
-          return sum + amount;
+          return sum + usdcToUsd(m.amount);
         }, 0);
         const totalVolumeUSD = splitVolume + mergeVolume;
 
@@ -506,7 +534,7 @@ class PolymarketSubgraphClient {
         // Map recent trades (from splits)
         const recentTrades = splits.slice(0, 100).map((s) => ({
           timestamp: parseInt(s.timestamp, 10) * 1000,
-          amountUSD: parseFloat(s.amount || '0') / 1e6,
+          amountUSD: usdcToUsd(s.amount),
           marketId: s.condition.id || '',
           marketVolume: 0,
         }));
@@ -537,8 +565,8 @@ class PolymarketSubgraphClient {
   }
 
   /**
-   * Get user positions data from the activity subgraph
-   * Calculates position concentration from split history
+   * Get user positions data from the PNL subgraph
+   * Gets actual position data including realized/unrealized PNL
    */
   public async getUserPositions(
     address: string
@@ -547,14 +575,11 @@ class PolymarketSubgraphClient {
 
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
-        // Use activity subgraph to get splits by condition
-        const response = await this.activityClient.post<PositionsQueryResponse>(
-          '',
-          {
-            query: USER_POSITIONS_QUERY,
-            variables: { address: normalizedAddress },
-          }
-        );
+        // Use PNL subgraph to get user positions
+        const response = await this.pnlClient.post<PositionsQueryResponse>('', {
+          query: USER_POSITIONS_QUERY,
+          variables: { address: normalizedAddress },
+        });
 
         if (response.data.errors && response.data.errors.length > 0) {
           logger.warn(
@@ -573,11 +598,11 @@ class PolymarketSubgraphClient {
           return null;
         }
 
-        const splits = data.splits || [];
-        if (splits.length === 0) {
+        const userPositions = data.userPositions || [];
+        if (userPositions.length === 0) {
           logger.debug(
             { address: normalizedAddress },
-            'No positions found for user'
+            'No positions found for user in PNL subgraph'
           );
           return null;
         }
@@ -586,12 +611,19 @@ class PolymarketSubgraphClient {
         const positionsByCondition = new Map<string, number>();
         let totalValueUSD = 0;
 
-        for (const split of splits) {
-          const conditionId = split.condition.id || 'unknown';
-          const amount = parseFloat(split.amount || '0') / 1e6;
-          const current = positionsByCondition.get(conditionId) || 0;
-          positionsByCondition.set(conditionId, current + amount);
-          totalValueUSD += amount;
+        for (const position of userPositions) {
+          const conditionId = position.conditionId || 'unknown';
+          // Calculate position value from net deposits - withdrawals + unrealized PNL
+          const netDeposits = usdcToUsd(position.netDeposits);
+          const netWithdrawals = usdcToUsd(position.netWithdrawals);
+          const unrealizedPnl = usdcToUsd(position.unrealizedPnl);
+          const positionValue = netDeposits - netWithdrawals + unrealizedPnl;
+
+          if (positionValue > 0) {
+            const current = positionsByCondition.get(conditionId) || 0;
+            positionsByCondition.set(conditionId, current + positionValue);
+            totalValueUSD += positionValue;
+          }
         }
 
         // Convert to positions array
@@ -711,8 +743,7 @@ class PolymarketSubgraphClient {
         let totalVolumeUSD = 0;
         for (const { trade } of allTrades) {
           // Use takerAmountFilled as the trade size (usually USDC)
-          const amount = parseFloat(trade.takerAmountFilled || '0') / 1e6;
-          totalVolumeUSD += amount;
+          totalVolumeUSD += usdcToUsd(trade.takerAmountFilled);
         }
 
         // Find earliest trade timestamp
@@ -726,7 +757,7 @@ class PolymarketSubgraphClient {
         // Map recent trades
         const recentTrades = allTrades.slice(0, 100).map(({ trade, side }) => ({
           timestamp: parseInt(trade.timestamp, 10) * 1000,
-          amountUSD: parseFloat(trade.takerAmountFilled || '0') / 1e6,
+          amountUSD: usdcToUsd(trade.takerAmountFilled),
           side,
           assetId: trade.makerAssetId || trade.takerAssetId || '',
         }));
