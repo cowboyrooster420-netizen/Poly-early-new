@@ -23,12 +23,14 @@ export interface AlertScore {
   totalScore: number; // 0-100 weighted score
   breakdown: {
     walletScore: number; // 0-100 (rescaled from 0-50)
-    oiScore: number; // 0-100 (with multipliers)
+    impactScore: number; // 0-100 (with multipliers) - replaces oiScore
+    impactMethod: string; // 'liquidity', 'volume', or 'oi'
+    impactPercentage: number; // Actual percentage used
     extremityScore: number; // Raw extremity score before cap
     extremityRaw: number; // Raw points before directionality
     directionalityMultiplier: number; // 1.5 underdog, 0.7 favorite, 1.0 even
     walletContribution: number; // 45% of wallet score
-    oiContribution: number; // 30% of OI score
+    impactContribution: number; // 30% of impact score - replaces impactContribution
     extremityContribution: number; // 25% of extremity score (capped at 30)
   };
   multipliers: {
@@ -178,10 +180,18 @@ class AlertScorerService {
     await this.incrementStat('passed_hard_filters');
 
     // ----------------------------------
-    // 2. OI SCORE WITH MULTIPLIERS
+    // 2. IMPACT SCORE WITH MULTIPLIERS
     // ----------------------------------
-    const oiRatio = tradeUsdValue / openInterest;
-    let oiScore = this.calculateBaseOiScore(oiRatio);
+    // Use the actual impact percentage from signal detection
+    const impactPercentage = tradeSignal.impactPercentage;
+    const impactMethod = tradeSignal.impactMethod;
+    const impactThreshold = tradeSignal.impactThreshold;
+
+    let impactScore = this.calculateImpactScore(
+      impactPercentage,
+      impactMethod,
+      impactThreshold
+    );
 
     // Get multipliers
     const marketSizeMultiplier = this.getMarketSizeMultiplier(openInterest);
@@ -191,51 +201,54 @@ class AlertScorerService {
     );
 
     // Apply multipliers
-    oiScore = oiScore * marketSizeMultiplier * dormancyMultiplier;
+    impactScore = impactScore * marketSizeMultiplier * dormancyMultiplier;
 
-    // Price impact bonus
+    // Price impact bonus (deprecated - keeping for backwards compatibility)
     if (tradeSignal.priceImpact >= 10) {
-      oiScore += 30;
+      impactScore += 30;
     } else if (tradeSignal.priceImpact >= 5) {
-      oiScore += 15;
+      impactScore += 15;
     }
 
-    oiScore = Math.min(100, oiScore);
+    impactScore = Math.min(100, impactScore);
 
     // ----------------------------------
     // 3. ENTRY PRICE EXTREMITY SCORE (v3 - with directionality)
     // ----------------------------------
     const extremityResult = this.calculateExtremityScore(
       tradeUsdValue,
-      oiRatio,
+      impactPercentage / 100, // Convert percentage to ratio for backwards compatibility
       entryProbability,
       tradeSignal.outcome
     );
 
     // ----------------------------------
     // 4. FINAL WEIGHTED SCORE (v3 - rebalanced)
-    // Weights: Wallet 45%, OI 30%, Extremity 25%
+    // Weights: Wallet 45%, Impact 30%, Extremity 25%
     // ----------------------------------
     const walletContribution = 0.45 * walletScore100;
-    const oiContribution = 0.3 * oiScore;
+    const impactContribution = 0.3 * impactScore;
     // Cap extremity contribution at 30 points max
     const extremityContribution = Math.min(30, 0.25 * extremityResult.final);
 
     const finalScore =
-      walletContribution + oiContribution + extremityContribution;
+      walletContribution + impactContribution + extremityContribution;
 
     // ----------------------------------
     // 5. ADJUST FOR FINGERPRINT CONFIDENCE
     // ----------------------------------
     let adjustedScore = finalScore;
     let confidenceAdjustment = 1.0;
-    
-    if ('status' in walletFingerprint && walletFingerprint.status === 'partial') {
+
+    if (
+      'status' in walletFingerprint &&
+      walletFingerprint.status === 'partial'
+    ) {
       // Reduce score for partial data
       confidenceAdjustment = 0.8;
       adjustedScore = finalScore * confidenceAdjustment;
       logger.debug(
-        { 
+        {
           originalScore: finalScore,
           adjustedScore,
           confidenceLevel: walletFingerprint.confidenceLevel,
@@ -256,12 +269,14 @@ class AlertScorerService {
       totalScore: Math.round(adjustedScore),
       breakdown: {
         walletScore: Math.round(walletScore100),
-        oiScore: Math.round(oiScore),
+        impactScore: Math.round(impactScore),
+        impactMethod,
+        impactPercentage,
         extremityScore: Math.round(extremityResult.final),
         extremityRaw: extremityResult.raw,
         directionalityMultiplier: extremityResult.multiplier,
         walletContribution: Math.round(walletContribution),
-        oiContribution: Math.round(oiContribution),
+        impactContribution: Math.round(impactContribution),
         extremityContribution: Math.round(extremityContribution),
       },
       multipliers: {
@@ -287,8 +302,10 @@ class AlertScorerService {
           walletRaw: Math.round(walletScore100 / 2), // 0-50 scale
           walletScaled: Math.round(walletScore100), // 0-100 scale
           walletContrib: Math.round(walletContribution), // 45% weight
-          oiScore: Math.round(oiScore),
-          oiContrib: Math.round(oiContribution), // 30% weight
+          impactScore: Math.round(impactScore),
+          impactMethod,
+          impactPercentage: impactPercentage.toFixed(2) + '%',
+          impactContrib: Math.round(impactContribution), // 30% weight
           extremityRaw: extremityResult.raw,
           directionality: extremityResult.multiplier,
           extremityFinal: Math.round(extremityResult.final),
@@ -397,15 +414,42 @@ class AlertScorerService {
   }
 
   /**
-   * Calculate base OI score from ratio (tiered)
+   * Calculate impact score based on method and percentage
+   * Different methods have different scoring curves
    */
-  private calculateBaseOiScore(oiRatio: number): number {
-    if (oiRatio < 0.02) return 0;
-    if (oiRatio < 0.05) return 10;
-    if (oiRatio < 0.1) return 25;
-    if (oiRatio < 0.2) return 45;
-    if (oiRatio < 0.35) return 70;
-    return 90;
+  private calculateImpactScore(
+    impactPercentage: number,
+    method: string,
+    threshold: number
+  ): number {
+    // Normalize impact relative to threshold (1x = at threshold, 2x = double threshold, etc)
+    const impactRatio = impactPercentage / threshold;
+
+    if (method === 'liquidity') {
+      // Liquidity impact is most significant - aggressive scoring
+      if (impactRatio < 1.0) return 0; // Below threshold
+      if (impactRatio < 1.5) return 20; // 2-3% liquidity
+      if (impactRatio < 2.5) return 40; // 3-5% liquidity
+      if (impactRatio < 4.0) return 60; // 5-8% liquidity
+      if (impactRatio < 7.0) return 80; // 8-14% liquidity
+      return 95; // >14% liquidity
+    } else if (method === 'volume') {
+      // Volume impact is moderate - balanced scoring
+      if (impactRatio < 1.0) return 0; // Below threshold
+      if (impactRatio < 2.0) return 15; // 5-10% of 24h volume
+      if (impactRatio < 3.0) return 30; // 10-15% of 24h volume
+      if (impactRatio < 5.0) return 50; // 15-25% of 24h volume
+      if (impactRatio < 8.0) return 70; // 25-40% of 24h volume
+      return 90; // >40% of 24h volume
+    } else {
+      // OI impact (fallback) - conservative scoring
+      if (impactRatio < 1.0) return 0; // Below threshold
+      if (impactRatio < 4.0) return 10; // 0.5-2% OI
+      if (impactRatio < 10.0) return 25; // 2-5% OI
+      if (impactRatio < 20.0) return 45; // 5-10% OI
+      if (impactRatio < 40.0) return 70; // 10-20% OI
+      return 90; // >20% OI
+    }
   }
 
   /**
@@ -518,12 +562,14 @@ class AlertScorerService {
       totalScore: 0,
       breakdown: {
         walletScore: 0,
-        oiScore: 0,
+        impactScore: 0,
+        impactMethod: 'unknown',
+        impactPercentage: 0,
         extremityScore: 0,
         extremityRaw: 0,
         directionalityMultiplier: 1.0,
         walletContribution: 0,
-        oiContribution: 0,
+        impactContribution: 0,
         extremityContribution: 0,
       },
       multipliers: {

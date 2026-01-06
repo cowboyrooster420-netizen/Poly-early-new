@@ -133,7 +133,7 @@ class DiscordNotifierService {
           value: [
             `**Total:** ${alert.confidenceScore}/100`,
             `**Wallet:** ${alert.scoreBreakdown.walletContribution}pts`,
-            `**OI:** ${alert.scoreBreakdown.oiContribution}pts`,
+            `**OI:** ${alert.scoreBreakdown.impactContribution}pts`,
             `**Extremity:** ${alert.scoreBreakdown.extremityContribution}pts`,
           ].join('\n'),
           inline: true,

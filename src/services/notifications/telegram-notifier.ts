@@ -154,7 +154,7 @@ class TelegramNotifierService {
     // Score breakdown (v2 - weighted contributions)
     message += `📈 *Score Breakdown*\n`;
     message += `• Wallet (50%): ${alert.scoreBreakdown.walletContribution}pts\n`;
-    message += `• OI/Size (35%): ${alert.scoreBreakdown.oiContribution}pts\n`;
+    message += `• OI/Size (35%): ${alert.scoreBreakdown.impactContribution}pts\n`;
     message += `• Extremity (15%): ${alert.scoreBreakdown.extremityContribution}pts\n\n`;
 
     // Wallet analysis

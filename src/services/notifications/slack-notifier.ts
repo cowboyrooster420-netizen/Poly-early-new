@@ -192,7 +192,7 @@ class SlackNotifierService {
           },
           {
             type: 'mrkdwn',
-            text: `*OI/Size (35%):*\n${alert.scoreBreakdown.oiContribution}pts`,
+            text: `*OI/Size (35%):*\n${alert.scoreBreakdown.impactContribution}pts`,
           },
           {
             type: 'mrkdwn',
