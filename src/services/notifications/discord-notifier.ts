@@ -132,9 +132,8 @@ class DiscordNotifierService {
           name: 'Score Breakdown',
           value: [
             `**Total:** ${alert.confidenceScore}/100`,
-            `**Wallet:** ${alert.scoreBreakdown.walletContribution}pts`,
-            `**OI:** ${alert.scoreBreakdown.impactContribution}pts`,
-            `**Extremity:** ${alert.scoreBreakdown.extremityContribution}pts`,
+            `**Wallet (60%):** ${alert.scoreBreakdown.walletContribution}pts`,
+            `**Impact (40%):** ${alert.scoreBreakdown.impactContribution}pts`,
           ].join('\n'),
           inline: true,
         },

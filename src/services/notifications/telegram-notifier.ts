@@ -151,11 +151,10 @@ class TelegramNotifierService {
     message += `• Price: ${(parseFloat(alert.tradePrice) * 100).toFixed(1)}¢\n`;
     message += `• Time: ${timestamp} UTC\n\n`;
 
-    // Score breakdown (v2 - weighted contributions)
+    // Score breakdown (weighted contributions)
     message += `📈 *Score Breakdown*\n`;
-    message += `• Wallet (50%): ${alert.scoreBreakdown.walletContribution}pts\n`;
-    message += `• OI/Size (35%): ${alert.scoreBreakdown.impactContribution}pts\n`;
-    message += `• Extremity (15%): ${alert.scoreBreakdown.extremityContribution}pts\n\n`;
+    message += `• Wallet (60%): ${alert.scoreBreakdown.walletContribution}pts\n`;
+    message += `• Impact (40%): ${alert.scoreBreakdown.impactContribution}pts\n\n`;
 
     // Wallet analysis
     message += `🔍 *Wallet Analysis*\n`;

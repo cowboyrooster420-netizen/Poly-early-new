@@ -26,12 +26,8 @@ export interface AlertScore {
     impactScore: number; // 0-100 (with multipliers) - replaces oiScore
     impactMethod: string; // 'liquidity', 'volume', or 'oi'
     impactPercentage: number; // Actual percentage used
-    extremityScore: number; // Raw extremity score before cap
-    extremityRaw: number; // Raw points before directionality
-    directionalityMultiplier: number; // 1.5 underdog, 0.7 favorite, 1.0 even
-    walletContribution: number; // 45% of wallet score
-    impactContribution: number; // 30% of impact score - replaces impactContribution
-    extremityContribution: number; // 25% of extremity score (capped at 30)
+    walletContribution: number; // 60% of wallet score
+    impactContribution: number; // 40% of impact score
   };
   multipliers: {
     marketSize: number; // 1.0, 1.5, or 2.0
@@ -74,9 +70,9 @@ class AlertScorerService {
         minTradeSize: this.MIN_TRADE_SIZE_USD,
         minOi: this.MIN_OI_USD,
         minWalletScore: this.MIN_WALLET_SCORE,
-        weights: { wallet: '45%', oi: '30%', extremity: '25%' },
+        weights: { wallet: '60%', impact: '40%' },
       },
-      'Alert scorer service initialized (v3 - rebalanced with directionality)'
+      'Alert scorer service initialized (v4 - extremity removed)'
     );
   }
 
@@ -227,26 +223,13 @@ class AlertScorerService {
     impactScore = Math.min(100, impactScore);
 
     // ----------------------------------
-    // 3. ENTRY PRICE EXTREMITY SCORE (v3 - with directionality)
+    // 3. FINAL WEIGHTED SCORE (without extremity)
+    // Weights: Wallet 60%, Impact 40%
     // ----------------------------------
-    const extremityResult = this.calculateExtremityScore(
-      tradeUsdValue,
-      impactPercentage / 100, // Convert percentage to ratio for backwards compatibility
-      entryProbability,
-      tradeSignal.outcome
-    );
+    const walletContribution = 0.6 * walletScore100;
+    const impactContribution = 0.4 * impactScore;
 
-    // ----------------------------------
-    // 4. FINAL WEIGHTED SCORE (v3 - rebalanced)
-    // Weights: Wallet 45%, Impact 30%, Extremity 25%
-    // ----------------------------------
-    const walletContribution = 0.45 * walletScore100;
-    const impactContribution = 0.3 * impactScore;
-    // Cap extremity contribution at 30 points max
-    const extremityContribution = Math.min(30, 0.25 * extremityResult.final);
-
-    const finalScore =
-      walletContribution + impactContribution + extremityContribution;
+    const finalScore = walletContribution + impactContribution;
 
     // ----------------------------------
     // 5. ADJUST FOR FINGERPRINT CONFIDENCE
@@ -286,12 +269,8 @@ class AlertScorerService {
         impactScore: Math.round(impactScore),
         impactMethod,
         impactPercentage,
-        extremityScore: Math.round(extremityResult.final),
-        extremityRaw: extremityResult.raw,
-        directionalityMultiplier: extremityResult.multiplier,
         walletContribution: Math.round(walletContribution),
         impactContribution: Math.round(impactContribution),
-        extremityContribution: Math.round(extremityContribution),
       },
       multipliers: {
         marketSize: marketSizeMultiplier,
@@ -321,15 +300,11 @@ class AlertScorerService {
         scores: {
           walletRaw: Math.round(walletScore100 / 2), // 0-50 scale
           walletScaled: Math.round(walletScore100), // 0-100 scale
-          walletContrib: Math.round(walletContribution), // 45% weight
+          walletContrib: Math.round(walletContribution), // 60% weight
           impactScore: Math.round(impactScore),
           impactMethod,
           impactPercentage: impactPercentage.toFixed(2) + '%',
-          impactContrib: Math.round(impactContribution), // 30% weight
-          extremityRaw: extremityResult.raw,
-          directionality: extremityResult.multiplier,
-          extremityFinal: Math.round(extremityResult.final),
-          extremityContrib: Math.round(extremityContribution), // 25% weight, capped at 30
+          impactContrib: Math.round(impactContribution), // 40% weight
         },
         multipliers: score.multipliers,
       },
@@ -511,77 +486,8 @@ class AlertScorerService {
   }
 
   /**
-   * Calculate extremity score based on entry probability
-   * Returns { raw, multiplier, final } for transparency
-   */
-  private calculateExtremityScore(
-    tradeUsdValue: number,
-    oiRatio: number,
-    entryProbability: number,
-    outcome: 'yes' | 'no'
-  ): { raw: number; multiplier: number; final: number } {
-    // Relaxed size gating - $750 OR 4% OI ratio
-    if (tradeUsdValue < 750 && oiRatio < 0.04) {
-      return { raw: 0, multiplier: 1.0, final: 0 };
-    }
-
-    // Determine if this is a contrarian bet or consensus farming
-    // At extreme markets (>90% or <10%), we reward contrarian bets and penalize consensus
-    const marketPercent = entryProbability * 100;
-    let bettingOnPercent: number;
-
-    // For extreme high markets (>90%), YES is consensus, NO is contrarian
-    // For extreme low markets (<10%), NO is consensus, YES is contrarian
-    if (marketPercent > 90) {
-      bettingOnPercent =
-        outcome === 'yes' ? marketPercent : 100 - marketPercent;
-    } else if (marketPercent < 10) {
-      bettingOnPercent = outcome === 'no' ? 100 - marketPercent : marketPercent;
-    } else {
-      // For non-extreme markets, use original logic
-      bettingOnPercent =
-        outcome === 'yes' ? marketPercent : 100 - marketPercent;
-    }
-
-    // Extremity scoring: High scores for contrarian bets (betting on unlikely outcomes)
-    // Low/zero scores for consensus bets (betting on likely outcomes)
-    let rawScore = 0;
-
-    if (bettingOnPercent < 2) {
-      rawScore = 100; // Betting on <2% outcome = extremely contrarian
-    } else if (bettingOnPercent < 5) {
-      rawScore = 80; // Betting on 2-5% outcome = very contrarian
-    } else if (bettingOnPercent < 10) {
-      rawScore = 60; // Betting on 5-10% outcome = contrarian
-    } else if (bettingOnPercent < 20) {
-      rawScore = 40; // Betting on 10-20% outcome = moderately contrarian
-    } else if (bettingOnPercent < 35) {
-      rawScore = 25; // Betting on 20-35% outcome = somewhat interesting
-    } else if (bettingOnPercent > 95) {
-      rawScore = 0; // Betting on >95% outcome = consensus/farming
-    } else if (bettingOnPercent > 90) {
-      rawScore = 5; // Betting on 90-95% outcome = near consensus
-    } else if (bettingOnPercent > 80) {
-      rawScore = 10; // Betting on 80-90% outcome = strong favorite
-    } else {
-      rawScore = 15; // Betting on 35-80% outcome = moderate
-    }
-
-    if (rawScore === 0) {
-      return { raw: 0, multiplier: 1.0, final: 0 };
-    }
-
-    // No additional multiplier needed - the scoring already captures contrarian behavior
-    const multiplier = 1.0;
-
-    const finalScore = rawScore * multiplier;
-
-    return { raw: rawScore, multiplier, final: finalScore };
-  }
-
-  /**
    * Classify final score
-   * Max possible: 45 (wallet) + 30 (OI) + 30 (extremity capped) = 105 (capped effectively ~100)
+   * Max possible: 60 (wallet) + 40 (impact) = 100
    */
   private classify(score: number): AlertClassification {
     if (score >= 90) return 'ALERT_STRONG_INSIDER';
@@ -602,12 +508,8 @@ class AlertScorerService {
         impactScore: 0,
         impactMethod: 'unknown',
         impactPercentage: 0,
-        extremityScore: 0,
-        extremityRaw: 0,
-        directionalityMultiplier: 1.0,
         walletContribution: 0,
         impactContribution: 0,
-        extremityContribution: 0,
       },
       multipliers: {
         marketSize: 1.0,

@@ -188,15 +188,11 @@ class SlackNotifierService {
         fields: [
           {
             type: 'mrkdwn',
-            text: `*Wallet (50%):*\n${alert.scoreBreakdown.walletContribution}pts`,
+            text: `*Wallet (60%):*\n${alert.scoreBreakdown.walletContribution}pts`,
           },
           {
             type: 'mrkdwn',
-            text: `*OI/Size (35%):*\n${alert.scoreBreakdown.impactContribution}pts`,
-          },
-          {
-            type: 'mrkdwn',
-            text: `*Extremity (15%):*\n${alert.scoreBreakdown.extremityContribution}pts`,
+            text: `*Impact (40%):*\n${alert.scoreBreakdown.impactContribution}pts`,
           },
           {
             type: 'mrkdwn',

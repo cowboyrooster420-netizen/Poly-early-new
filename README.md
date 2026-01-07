@@ -21,9 +21,8 @@ Production-grade automated detection system for identifying potentially informed
 
 ### 📊 Alert Scoring (v2 - Tiered with Multipliers)
 - **Weighted 0-100 Score** combining:
-  - **Wallet Suspicion (50%)**: Low tx, young wallet, high netflow, single-purpose, CEX funded
-  - **OI/Trade Size (35%)**: Tiered scoring with market size + dormancy multipliers
-  - **Entry Extremity (15%)**: Bonus for extreme odds (< 10% or > 90% probability)
+  - **Wallet Suspicion (60%)**: Low tx, young wallet, high netflow, single-purpose, CEX funded
+  - **Impact Score (40%)**: Trade impact on liquidity, volume, or OI with multipliers
 - **Multipliers**:
   - Small market (<$25k OI): 2x multiplier on OI score
   - Quiet market (8+ hours): 2x multiplier on OI score
@@ -296,12 +295,6 @@ Customize via environment variables or `src/config/thresholds.ts`:
 | 20-35% | 70 |
 | 35%+ | 90 |
 
-**Extremity Bonuses:**
-| Entry Price | Bonus |
-|-------------|-------|
-| < 5% or > 95% | 40 pts |
-| < 10% or > 90% | 25 pts |
-| < 15% or > 85% | 15 pts |
 
 ### Market Selection
 

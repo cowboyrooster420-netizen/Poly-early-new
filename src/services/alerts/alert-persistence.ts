@@ -99,7 +99,7 @@ class AlertPersistenceService {
             scoreTradeSize: data.scoreBreakdown.impactContribution, // OI contribution (35% weight)
             scoreDormancy: 0, // Stored in multipliers now
             scoreWalletSuspicion: data.scoreBreakdown.walletContribution, // Wallet contribution (50% weight)
-            scoreTiming: data.scoreBreakdown.extremityContribution, // Extremity contribution (15% weight)
+            scoreTiming: 0, // Extremity removed - no longer used
 
             // Alert metadata
             notified: false,
