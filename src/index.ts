@@ -306,7 +306,7 @@ async function main(): Promise<void> {
           );
           console.error(
             'CRITICAL: Bot crashed and Telegram notification failed!',
-            error
+            reason
           );
         })
         .finally(() => {
