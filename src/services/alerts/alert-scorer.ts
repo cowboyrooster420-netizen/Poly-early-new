@@ -525,13 +525,26 @@ class AlertScorerService {
       return { raw: 0, multiplier: 1.0, final: 0 };
     }
 
-    // Calculate what probability they're betting on
-    const bettingOnProbability =
-      outcome === 'yes' ? entryProbability : 1 - entryProbability;
-    const bettingOnPercent = bettingOnProbability * 100;
+    // Determine if this is a contrarian bet or consensus farming
+    // At extreme markets (>90% or <10%), we reward contrarian bets and penalize consensus
+    const marketPercent = entryProbability * 100;
+    let bettingOnPercent: number;
 
-    // Extremity scoring: High scores for contrarian bets (betting on <10% outcomes)
-    // Low/zero scores for consensus bets (betting on >90% outcomes)
+    // For extreme high markets (>90%), YES is consensus, NO is contrarian
+    // For extreme low markets (<10%), NO is consensus, YES is contrarian
+    if (marketPercent > 90) {
+      bettingOnPercent =
+        outcome === 'yes' ? marketPercent : 100 - marketPercent;
+    } else if (marketPercent < 10) {
+      bettingOnPercent = outcome === 'no' ? 100 - marketPercent : marketPercent;
+    } else {
+      // For non-extreme markets, use original logic
+      bettingOnPercent =
+        outcome === 'yes' ? marketPercent : 100 - marketPercent;
+    }
+
+    // Extremity scoring: High scores for contrarian bets (betting on unlikely outcomes)
+    // Low/zero scores for consensus bets (betting on likely outcomes)
     let rawScore = 0;
 
     if (bettingOnPercent < 2) {
