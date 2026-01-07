@@ -259,8 +259,15 @@ async function main(): Promise<void> {
         .sendMessage(
           `💀 BOT CRASHED!\n\nError: ${error.message}\n\nStack: ${error.stack?.slice(0, 500) || 'N/A'}`
         )
-        .catch(() => {
-          /* ignore */
+        .catch((notifError) => {
+          logger.error(
+            { notifError },
+            'Failed to send crash notification via Telegram'
+          );
+          console.error(
+            'CRITICAL: Bot crashed and Telegram notification failed!',
+            error
+          );
         })
         .finally(() => {
           process.exit(1);
@@ -292,8 +299,15 @@ async function main(): Promise<void> {
         .sendMessage(
           `💀 BOT CRASHED!\n\nUnhandled Rejection: ${errorMessage}\n\nStack: ${String(errorStack).slice(0, 500)}`
         )
-        .catch(() => {
-          /* ignore */
+        .catch((notifError) => {
+          logger.error(
+            { notifError },
+            'Failed to send crash notification via Telegram'
+          );
+          console.error(
+            'CRITICAL: Bot crashed and Telegram notification failed!',
+            error
+          );
         })
         .finally(() => {
           process.exit(1);

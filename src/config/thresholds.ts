@@ -72,8 +72,8 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
   dormantPriceMoveThreshold: 8,
 
   // Scoring
-  minWalletScore: 70,
-  minConfidenceScore: 75,
+  minWalletScore: 50, // Temporarily lowered from 70
+  minConfidenceScore: 60, // Temporarily lowered from 75
 
   // Wallet fingerprint (on-chain)
   maxWalletTransactions: 40,
