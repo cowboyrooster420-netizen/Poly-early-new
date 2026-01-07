@@ -203,6 +203,20 @@ class AlertScorerService {
     // Apply multipliers
     impactScore = impactScore * marketSizeMultiplier * dormancyMultiplier;
 
+    // Absolute size bonus for whale trades
+    if (tradeSignal.passedViaAbsoluteSize && tradeSignal.absoluteSizeTier) {
+      // Give bonus points for large absolute trades that had low relative impact
+      if (tradeSignal.absoluteSizeTier === 'whale') {
+        impactScore += 40; // $100k+ trades
+      } else if (tradeSignal.absoluteSizeTier === 'large') {
+        impactScore += 25; // $50k+ trades
+      } else if (tradeSignal.absoluteSizeTier === 'significant') {
+        impactScore += 15; // $25k+ trades
+      } else if (tradeSignal.absoluteSizeTier === 'notable') {
+        impactScore += 10; // $10k+ trades
+      }
+    }
+
     // Price impact bonus (deprecated - keeping for backwards compatibility)
     if (tradeSignal.priceImpact >= 10) {
       impactScore += 30;

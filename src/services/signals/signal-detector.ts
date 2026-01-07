@@ -113,23 +113,42 @@ class SignalDetector {
         trade.outcome
       );
 
-      // Check if trade meets minimum impact threshold
-      if (!impactResult.meetsThreshold) {
+      // Hybrid scoring: Check both relative impact AND absolute size
+      const absoluteSizeThreshold =
+        this.getAbsoluteSizeThreshold(tradeUsdValue);
+      const meetsAbsoluteThreshold = absoluteSizeThreshold.meetsThreshold;
+
+      // Accept trade if EITHER threshold is met
+      if (!impactResult.meetsThreshold && !meetsAbsoluteThreshold) {
         logger.info(
           {
             tradeId: trade.id,
             tradeUsdValue: tradeUsdValue.toFixed(2),
             openInterest: marketData.openInterest,
             impactPercentage: impactResult.impactPercentage.toFixed(2),
+            absoluteThreshold: absoluteSizeThreshold.threshold,
             method: impactResult.method,
-            threshold: impactResult.threshold,
-            reason: `Below ${impactResult.method} threshold`,
+            relativeThreshold: impactResult.threshold,
+            reason: `Below both thresholds`,
             details: impactResult.details,
           },
-          `🚫 Trade filtered: ${impactResult.method} impact too low`
+          `🚫 Trade filtered: Both impact (${impactResult.impactPercentage.toFixed(2)}%) and size ($${tradeUsdValue.toFixed(0)}) too low`
         );
         await this.incrementStat('filtered_oi_threshold');
         return null;
+      }
+
+      // Log when absolute size overrides relative impact
+      if (!impactResult.meetsThreshold && meetsAbsoluteThreshold) {
+        logger.info(
+          {
+            tradeId: trade.id,
+            tradeUsdValue: tradeUsdValue.toFixed(2),
+            impactPercentage: impactResult.impactPercentage.toFixed(2),
+            reason: 'Passed due to absolute size despite low relative impact',
+          },
+          `💰 Large trade detected via absolute size threshold`
+        );
       }
 
       // Track trades that passed OI filter
@@ -152,6 +171,10 @@ class SignalDetector {
         tradeUsdValue,
         timestamp: trade.timestamp,
         outcome: trade.outcome,
+        // Add info about absolute size if it was the reason for passing
+        absoluteSizeTier: absoluteSizeThreshold.tier,
+        passedViaAbsoluteSize:
+          !impactResult.meetsThreshold && meetsAbsoluteThreshold,
       };
 
       logger.info(
@@ -163,8 +186,12 @@ class SignalDetector {
           impactPercentage: impactResult.impactPercentage.toFixed(2),
           method: impactResult.method,
           threshold: impactResult.threshold,
+          absoluteSizeTier: absoluteSizeThreshold.tier,
+          passedViaSize: signal.passedViaAbsoluteSize,
         },
-        `🚨 Large trade detected (${impactResult.method} impact: ${impactResult.impactPercentage.toFixed(2)}%)`
+        signal.passedViaAbsoluteSize
+          ? `🚨 Large trade detected ($${(tradeUsdValue / 1000).toFixed(0)}k ${absoluteSizeThreshold.tier} trade)`
+          : `🚨 Large trade detected (${impactResult.method} impact: ${impactResult.impactPercentage.toFixed(2)}%)`
       );
 
       return signal;
@@ -172,6 +199,29 @@ class SignalDetector {
       logger.error({ error, tradeId: trade.id }, 'Failed to analyze trade');
       return null;
     }
+  }
+
+  /**
+   * Get absolute size threshold for trade
+   * Tiered system: $10k, $25k, $50k, $100k
+   */
+  private getAbsoluteSizeThreshold(tradeUsdValue: number): {
+    meetsThreshold: boolean;
+    threshold: number;
+    tier: string;
+  } {
+    if (tradeUsdValue >= 100000) {
+      return { meetsThreshold: true, threshold: 100000, tier: 'whale' };
+    } else if (tradeUsdValue >= 50000) {
+      return { meetsThreshold: true, threshold: 50000, tier: 'large' };
+    } else if (tradeUsdValue >= 25000) {
+      return { meetsThreshold: true, threshold: 25000, tier: 'significant' };
+    } else if (tradeUsdValue >= 10000) {
+      return { meetsThreshold: true, threshold: 10000, tier: 'notable' };
+    }
+
+    // Below $10k, doesn't meet absolute threshold
+    return { meetsThreshold: false, threshold: 10000, tier: 'small' };
   }
 
   /**

@@ -76,6 +76,8 @@ export interface TradeSignal {
   tradeUsdValue: number;
   timestamp: number;
   outcome: 'yes' | 'no';
+  absoluteSizeTier?: string; // 'whale', 'large', 'significant', 'notable', 'small'
+  passedViaAbsoluteSize?: boolean; // true if passed due to size despite low impact
 }
 
 export interface DormancyMetrics {
