@@ -1,23 +1,29 @@
 import 'dotenv/config';
 
-console.log('[STARTUP] Application starting...');
+// Remove startup console logs in production
+/* eslint-disable no-console */
+if (process.env['NODE_ENV'] !== 'production') {
+  console.log('[STARTUP] Application starting...');
 
-// Test Telegram connectivity at startup (before axios)
-import https from 'https';
-const tgToken = process.env['TELEGRAM_BOT_TOKEN'];
-if (tgToken) {
-  console.log('[STARTUP] Testing Telegram connectivity...');
-  https
-    .get(`https://api.telegram.org/bot${tgToken}/getMe`, (res) => {
-      console.log('[STARTUP] TG STATUS:', res.statusCode);
-      let data = '';
-      res.on('data', (chunk) => (data += chunk));
-      res.on('end', () => console.log('[STARTUP] TG BODY:', data));
-    })
-    .on('error', (err) => {
-      console.error('[STARTUP] TG ERROR:', err.message);
-    });
+  // Test Telegram connectivity at startup (before axios)
+  void import('https').then((https) => {
+    const tgToken = process.env['TELEGRAM_BOT_TOKEN'];
+    if (tgToken) {
+      console.log('[STARTUP] Testing Telegram connectivity...');
+      https.default
+        .get(`https://api.telegram.org/bot${tgToken}/getMe`, (res) => {
+          console.log('[STARTUP] TG STATUS:', res.statusCode);
+          let data = '';
+          res.on('data', (chunk) => (data += chunk));
+          res.on('end', () => console.log('[STARTUP] TG BODY:', data));
+        })
+        .on('error', (err) => {
+          console.error('[STARTUP] TG ERROR:', err.message);
+        });
+    }
+  });
 }
+/* eslint-enable no-console */
 
 import Fastify from 'fastify';
 
@@ -218,16 +224,49 @@ async function main(): Promise<void> {
       // Stop trade poller
       tradePoller.stop();
 
-      // Close WebSocket connection
+      // Stop accepting new trades
       await polymarketWs.disconnect();
+
+      // Wait for trade queue to drain (with timeout)
+      logger.info('Draining trade queue...');
+      const drainStart = Date.now();
+      const DRAIN_TIMEOUT_MS = 30000; // 30 seconds max
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const stats = tradeService.getQueueStats();
+
+        if (stats.mainQueue === 0 && !stats.isProcessing) {
+          logger.info(
+            {
+              processedDuringShutdown: stats.totalProcessed,
+              drainTimeMs: Date.now() - drainStart,
+            },
+            'Trade queue drained successfully'
+          );
+          break;
+        }
+
+        if (Date.now() - drainStart > DRAIN_TIMEOUT_MS) {
+          logger.warn(
+            {
+              remainingInQueue: stats.mainQueue,
+              deadLetterQueue: stats.deadLetterQueue,
+            },
+            'Trade queue drain timeout - some trades may be lost'
+          );
+          break;
+        }
+
+        // Check every 100ms
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
 
       // Close database connection
       await db.disconnect();
 
       // Close Redis connection
       await redis.disconnect();
-
-      // TODO: Drain job queues
 
       logger.info('Graceful shutdown completed');
       process.exit(0);
@@ -264,10 +303,6 @@ async function main(): Promise<void> {
             { notifError },
             'Failed to send crash notification via Telegram'
           );
-          console.error(
-            'CRITICAL: Bot crashed and Telegram notification failed!',
-            error
-          );
         })
         .finally(() => {
           process.exit(1);
@@ -303,10 +338,6 @@ async function main(): Promise<void> {
           logger.error(
             { notifError },
             'Failed to send crash notification via Telegram'
-          );
-          console.error(
-            'CRITICAL: Bot crashed and Telegram notification failed!',
-            reason
           );
         })
         .finally(() => {

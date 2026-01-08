@@ -50,13 +50,15 @@ export class HealthMonitor {
     };
 
     // Check all services in parallel
-    const [redis, database, circuits, detector, memory] = await Promise.all([
-      this.checkRedisHealth(),
-      this.checkDatabaseHealth(),
-      this.checkCircuitBreakers(),
-      this.checkSignalDetectorHealth(),
-      this.checkMemoryHealth(),
-    ]);
+    const [redis, database, circuits, detector, memory, tradeQueue] =
+      await Promise.all([
+        this.checkRedisHealth(),
+        this.checkDatabaseHealth(),
+        this.checkCircuitBreakers(),
+        this.checkSignalDetectorHealth(),
+        this.checkMemoryHealth(),
+        this.checkTradeQueueHealth(),
+      ]);
 
     health.services = {
       redis,
@@ -64,6 +66,7 @@ export class HealthMonitor {
       circuitBreakers: circuits,
       signalDetector: detector,
       memory,
+      tradeQueue,
     };
 
     // Determine overall health
@@ -212,6 +215,39 @@ export class HealthMonitor {
         heapUsedPercent: Math.round(heapUsedPercent),
       },
     };
+  }
+
+  /**
+   * Check trade queue health
+   */
+  private async checkTradeQueueHealth(): Promise<ServiceHealth> {
+    try {
+      const { tradeService } = await import('../polymarket/trade-service.js');
+      const stats = tradeService.getQueueStats();
+
+      // Determine health status
+      let status: 'up' | 'degraded' | 'down' = 'up';
+      if (stats.deadLetterQueue > 50) {
+        status = 'down'; // Many failures
+      } else if (stats.deadLetterQueue > 10 || stats.mainQueue > 500) {
+        status = 'degraded'; // Some concern
+      }
+
+      return {
+        status,
+        details: {
+          mainQueue: stats.mainQueue,
+          deadLetterQueue: stats.deadLetterQueue,
+          isProcessing: stats.isProcessing,
+          totalProcessed: stats.totalProcessed,
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'down',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
   }
 
   /**

@@ -12,6 +12,12 @@ import { logger } from '../../utils/logger.js';
 import { DecisionFramework } from '../data/decision-framework.js';
 import type { PolymarketTrade } from '../../types/index.js';
 
+interface QueuedTrade {
+  trade: PolymarketTrade;
+  attempts: number;
+  lastError?: Error;
+}
+
 /**
  * Trade service - handles incoming trades and storage
  * Uses a queue to prevent resource exhaustion from concurrent processing
@@ -19,9 +25,12 @@ import type { PolymarketTrade } from '../../types/index.js';
 class TradeService {
   private static instance: TradeService | null = null;
   private tradeCount = 0;
-  private tradeQueue: PolymarketTrade[] = [];
+  private tradeQueue: QueuedTrade[] = [];
+  private deadLetterQueue: QueuedTrade[] = [];
   private isProcessing = false;
   private readonly MAX_QUEUE_SIZE = 1000;
+  private readonly MAX_RETRY_ATTEMPTS = 3;
+  private readonly RETRY_DELAY_MS = 1000; // Initial delay, exponentially increases
 
   private constructor() {
     // Private constructor for singleton
@@ -53,13 +62,20 @@ class TradeService {
     // Drop trades if queue is full to prevent memory exhaustion
     if (this.tradeQueue.length >= this.MAX_QUEUE_SIZE) {
       logger.warn(
-        { queueSize: this.tradeQueue.length },
+        {
+          queueSize: this.tradeQueue.length,
+          tradeId: trade.id,
+          deadLetterSize: this.deadLetterQueue.length,
+        },
         'Trade queue full, dropping trade'
       );
       return;
     }
 
-    this.tradeQueue.push(trade);
+    this.tradeQueue.push({
+      trade,
+      attempts: 0,
+    });
 
     // Start processing if not already running
     if (!this.isProcessing) {
@@ -68,20 +84,108 @@ class TradeService {
   }
 
   /**
-   * Process trades from the queue sequentially
+   * Process trades from the queue sequentially with retry logic
    */
   private async processQueue(): Promise<void> {
     if (this.isProcessing) return;
     this.isProcessing = true;
 
     while (this.tradeQueue.length > 0) {
-      const trade = this.tradeQueue.shift();
-      if (trade) {
-        await this.processTradeInternal(trade);
+      const queuedTrade = this.tradeQueue.shift();
+      if (queuedTrade) {
+        try {
+          await this.processTradeInternal(queuedTrade.trade);
+
+          // Log recovery if this was a retry
+          if (queuedTrade.attempts > 0) {
+            logger.info(
+              {
+                tradeId: queuedTrade.trade.id,
+                attempts: queuedTrade.attempts,
+              },
+              '✅ Trade processed successfully after retry'
+            );
+          }
+        } catch (error) {
+          await this.handleProcessingError(queuedTrade, error);
+        }
       }
     }
 
     this.isProcessing = false;
+  }
+
+  /**
+   * Handle processing errors with exponential backoff retry
+   */
+  private async handleProcessingError(
+    queuedTrade: QueuedTrade,
+    error: unknown
+  ): Promise<void> {
+    queuedTrade.attempts++;
+    queuedTrade.lastError =
+      error instanceof Error ? error : new Error(String(error));
+
+    if (queuedTrade.attempts < this.MAX_RETRY_ATTEMPTS) {
+      // Calculate exponential backoff delay
+      const delay = this.RETRY_DELAY_MS * Math.pow(2, queuedTrade.attempts - 1);
+
+      logger.warn(
+        {
+          tradeId: queuedTrade.trade.id,
+          attempts: queuedTrade.attempts,
+          maxAttempts: this.MAX_RETRY_ATTEMPTS,
+          retryInMs: delay,
+          error: queuedTrade.lastError.message,
+        },
+        `⚠️ Trade processing failed, will retry (${queuedTrade.attempts}/${this.MAX_RETRY_ATTEMPTS})`
+      );
+
+      // Re-queue with delay
+      setTimeout(() => {
+        if (this.tradeQueue.length < this.MAX_QUEUE_SIZE) {
+          this.tradeQueue.push(queuedTrade);
+          if (!this.isProcessing) {
+            void this.processQueue();
+          }
+        } else {
+          // Queue still full, move to dead letter queue
+          this.moveToDeadLetterQueue(queuedTrade);
+        }
+      }, delay);
+    } else {
+      // Max retries exceeded, move to dead letter queue
+      this.moveToDeadLetterQueue(queuedTrade);
+    }
+  }
+
+  /**
+   * Move failed trade to dead letter queue
+   */
+  private moveToDeadLetterQueue(queuedTrade: QueuedTrade): void {
+    this.deadLetterQueue.push(queuedTrade);
+
+    logger.error(
+      {
+        tradeId: queuedTrade.trade.id,
+        attempts: queuedTrade.attempts,
+        deadLetterSize: this.deadLetterQueue.length,
+        error: queuedTrade.lastError?.message,
+        stack: queuedTrade.lastError?.stack,
+      },
+      '❌ Trade moved to dead letter queue after max retries'
+    );
+
+    // Alert if dead letter queue is getting large
+    if (
+      this.deadLetterQueue.length > 100 &&
+      this.deadLetterQueue.length % 10 === 0
+    ) {
+      logger.error(
+        { deadLetterSize: this.deadLetterQueue.length },
+        '🚨 CRITICAL: Dead letter queue growing large!'
+      );
+    }
   }
 
   /**
@@ -234,6 +338,7 @@ class TradeService {
         'Signal detection completed'
       );
     } catch (error) {
+      // Log the error with context
       logger.error(
         {
           error:
@@ -252,7 +357,8 @@ class TradeService {
         },
         'Failed to process trade'
       );
-      // Don't throw - we don't want one bad trade to kill the stream
+      // Re-throw to trigger retry logic
+      throw error;
     }
   }
 
@@ -666,6 +772,59 @@ class TradeService {
    */
   public resetProcessedCount(): void {
     this.tradeCount = 0;
+  }
+
+  /**
+   * Get queue statistics
+   */
+  public getQueueStats(): {
+    mainQueue: number;
+    deadLetterQueue: number;
+    isProcessing: boolean;
+    totalProcessed: number;
+  } {
+    return {
+      mainQueue: this.tradeQueue.length,
+      deadLetterQueue: this.deadLetterQueue.length,
+      isProcessing: this.isProcessing,
+      totalProcessed: this.tradeCount,
+    };
+  }
+
+  /**
+   * Retry all trades from dead letter queue
+   */
+  public async retryDeadLetterQueue(): Promise<number> {
+    const count = this.deadLetterQueue.length;
+    if (count === 0) return 0;
+
+    logger.info({ count }, '🔄 Retrying all trades from dead letter queue');
+
+    // Move all dead letter trades back to main queue with reset attempts
+    while (this.deadLetterQueue.length > 0) {
+      const queuedTrade = this.deadLetterQueue.shift();
+      if (queuedTrade) {
+        queuedTrade.attempts = 0; // Reset attempts
+        this.tradeQueue.push(queuedTrade);
+      }
+    }
+
+    // Start processing if not already running
+    if (!this.isProcessing) {
+      void this.processQueue();
+    }
+
+    return count;
+  }
+
+  /**
+   * Clear dead letter queue (use with caution!)
+   */
+  public clearDeadLetterQueue(): number {
+    const count = this.deadLetterQueue.length;
+    this.deadLetterQueue = [];
+    logger.warn({ count }, '🗑️ Dead letter queue cleared');
+    return count;
   }
 }
 

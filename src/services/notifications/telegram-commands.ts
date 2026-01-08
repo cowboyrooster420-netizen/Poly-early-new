@@ -1,4 +1,4 @@
-import axios, { type AxiosInstance } from 'axios';
+import axios, { type AxiosInstance, isAxiosError } from 'axios';
 
 import { getEnv } from '../../config/env.js';
 import { getThresholds } from '../../config/thresholds.js';
@@ -136,7 +136,7 @@ class TelegramCommandHandler {
         this.consecutiveErrors++;
 
         // Handle 409 conflict (another instance is polling) silently
-        if (axios.isAxiosError(err) && err.response?.status === 409) {
+        if (isAxiosError(err) && err.response?.status === 409) {
           logger.warn(
             'Telegram polling conflict detected - another instance may be running. Will retry...'
           );
@@ -153,7 +153,7 @@ class TelegramCommandHandler {
         if (shouldLog) {
           this.lastErrorLogTime = now;
           let errorMsg: string;
-          if (axios.isAxiosError(err)) {
+          if (isAxiosError(err)) {
             if (err.response) {
               errorMsg = `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`;
             } else if (err.request) {
@@ -175,6 +175,11 @@ class TelegramCommandHandler {
       .finally(() => {
         // Schedule next poll after current one completes (with small delay)
         if (this.isRunning) {
+          // Clear any existing timeout before setting new one
+          if (this.pollInterval) {
+            clearTimeout(this.pollInterval);
+            this.pollInterval = null;
+          }
           this.pollInterval = setTimeout(() => this.startPollingLoop(), 1000);
         }
       });
@@ -221,7 +226,7 @@ class TelegramCommandHandler {
       }
     } catch (error) {
       // Ignore timeout errors
-      if (!axios.isAxiosError(error) || error.code !== 'ECONNABORTED') {
+      if (!isAxiosError(error) || error.code !== 'ECONNABORTED') {
         throw error;
       }
     }
@@ -333,6 +338,7 @@ class TelegramCommandHandler {
             }
           );
 
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           for (const token of clobResponse.data.tokens || []) {
             if (token.outcome === 'Yes') {
               clobTokenIdYes = token.token_id;
