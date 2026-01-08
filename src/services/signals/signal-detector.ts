@@ -4,7 +4,10 @@ import { getThresholds } from '../../config/thresholds.js';
 import { db } from '../database/prisma.js';
 import { redis } from '../cache/redis.js';
 import { logger } from '../../utils/logger.js';
-import { OiCalculationService } from '../analysis/oi-calculator.js';
+import {
+  OiCalculationService,
+  type LiquidityData,
+} from '../analysis/oi-calculator.js';
 import { safeParseFloat, calculateUsdValue } from '../../utils/decimals.js';
 import { DecisionFramework } from '../data/decision-framework.js';
 import type {
@@ -109,9 +112,12 @@ class SignalDetector {
 
       // First, get liquidity data if using liquidity method
       let availableLiquidity: number | null = null;
+      let liquidityData: LiquidityData | null = null;
+
       if (thresholds.oiCalculationMethod === 'liquidity') {
         try {
-          const liquidityData = await this.oiCalculator.getAvailableLiquidity(
+          // Cache the liquidity data to avoid fetching twice
+          liquidityData = await this.oiCalculator.getAvailableLiquidity(
             trade.marketId,
             trade.side,
             trade.outcome
@@ -153,12 +159,14 @@ class SignalDetector {
       }
 
       // Calculate impact percentage using configured method (liquidity/volume/oi)
+      // Pass cached liquidity data if available to avoid double fetching
       const impactResult = await this.oiCalculator.calculateImpactPercentage(
         tradeUsdValue,
         trade.side,
         trade.marketId,
         parseFloat(marketData.openInterest),
-        trade.outcome
+        trade.outcome,
+        liquidityData // Pass cached data to avoid refetching
       );
 
       // Now check if trade meets impact threshold (it already passed minimum size)

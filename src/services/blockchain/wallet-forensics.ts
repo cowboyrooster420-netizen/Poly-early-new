@@ -766,7 +766,7 @@ class WalletForensicsService {
     return {
       address,
       status: 'error' as FingerprintStatus,
-      isSuspicious: false, // Don't flag as suspicious on errors
+      isSuspicious: true, // CHANGED: Flag as suspicious on errors - better safe than sorry
       errorReason,
       dataCompleteness,
       confidenceLevel: 'none',

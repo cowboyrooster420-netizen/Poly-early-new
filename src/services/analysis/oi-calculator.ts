@@ -5,7 +5,7 @@ import { getEnv } from '../../config/env.js';
 import { redis } from '../cache/redis.js';
 import { safeParseFloat, calculateUsdValue } from '../../utils/decimals.js';
 
-interface LiquidityData {
+export interface LiquidityData {
   availableLiquidity: number;
   bidLiquidity: number;
   askLiquidity: number;
@@ -84,7 +84,8 @@ export class OiCalculationService {
     tradeSide: 'buy' | 'sell',
     marketId: string,
     openInterest: number,
-    outcome?: 'yes' | 'no'
+    outcome?: 'yes' | 'no',
+    cachedLiquidityData?: LiquidityData | null
   ): Promise<ImpactResult> {
     const thresholds = getThresholds();
     const method = thresholds.oiCalculationMethod;
@@ -97,7 +98,8 @@ export class OiCalculationService {
             tradeSide,
             marketId,
             openInterest,
-            outcome
+            outcome,
+            cachedLiquidityData
           );
 
         case 'volume':
@@ -136,16 +138,15 @@ export class OiCalculationService {
     tradeSide: 'buy' | 'sell',
     marketId: string,
     openInterest: number,
-    outcome?: 'yes' | 'no'
+    outcome?: 'yes' | 'no',
+    cachedLiquidityData?: LiquidityData | null
   ): Promise<ImpactResult> {
     const thresholds = getThresholds();
 
-    // Get current orderbook from Polymarket API
-    const liquidity = await this.getAvailableLiquidity(
-      marketId,
-      tradeSide,
-      outcome
-    );
+    // Use cached data if provided, otherwise fetch
+    const liquidity =
+      cachedLiquidityData ??
+      (await this.getAvailableLiquidity(marketId, tradeSide, outcome));
 
     if (!liquidity || liquidity.availableLiquidity <= 0) {
       if (thresholds.fallbackToOiCalculation) {

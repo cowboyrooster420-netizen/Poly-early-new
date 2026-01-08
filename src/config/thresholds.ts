@@ -86,12 +86,12 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
   cexFundingWindowDays: 14,
 
   // Subgraph-based wallet thresholds
-  subgraphLowTradeCount: 10,
-  subgraphYoungAccountDays: 30,
-  subgraphLowVolumeUSD: 50000,
-  subgraphHighConcentrationPct: 70,
-  subgraphFreshFatBetPriorTrades: 2,
-  subgraphFreshFatBetSizeUSD: 20000,
+  subgraphLowTradeCount: 5, // Reduced from 10 - more sensitive to new traders
+  subgraphYoungAccountDays: 14, // Reduced from 30 - catch newer accounts
+  subgraphLowVolumeUSD: 10000, // Reduced from 50000 - flag smaller traders
+  subgraphHighConcentrationPct: 60, // Reduced from 70 - catch more concentrated bets
+  subgraphFreshFatBetPriorTrades: 3, // Increased from 2 - slightly more permissive
+  subgraphFreshFatBetSizeUSD: 10000, // Reduced from 20000 - catch medium-sized insider trades
   subgraphFreshFatBetMaxOI: 500000,
   subgraphCacheTTLHours: 48,
 
@@ -99,8 +99,8 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
   skipTradesOnProxyError: false,
 
   // Market-aware minimum thresholds
-  absoluteMinUsd: 5000,
-  relativeLiquidityFactor: 0.5,
+  absoluteMinUsd: 2500, // Reduced from 5000 - catch medium-sized trades
+  relativeLiquidityFactor: 0.3, // Reduced from 0.5 - only need 30% of liquidity impact
 };
 
 /**
