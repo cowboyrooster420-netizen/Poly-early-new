@@ -104,6 +104,54 @@ class SignalDetector {
         safeParseFloat(trade.price)
       );
 
+      // Get thresholds for market-aware filtering
+      const thresholds = getThresholds();
+
+      // First, get liquidity data if using liquidity method
+      let availableLiquidity: number | null = null;
+      if (thresholds.oiCalculationMethod === 'liquidity') {
+        try {
+          const liquidityData = await this.oiCalculator.getAvailableLiquidity(
+            trade.marketId,
+            trade.side,
+            trade.outcome
+          );
+          if (liquidityData) {
+            availableLiquidity = liquidityData.availableLiquidity;
+          }
+        } catch (error) {
+          logger.debug(
+            { error, marketId: trade.marketId },
+            'Failed to get liquidity for pre-filter'
+          );
+        }
+      }
+
+      // Market-aware minimum threshold: Must be meaningful in absolute OR relative terms
+      const minThreshold =
+        availableLiquidity !== null
+          ? Math.min(
+              thresholds.absoluteMinUsd || 5000, // Ceiling: $5k max requirement
+              thresholds.relativeLiquidityFactor * availableLiquidity // Floor: % of available liquidity
+            )
+          : thresholds.absoluteMinUsd || 5000; // Fallback to absolute minimum if no liquidity data
+
+      // Apply market-aware gate before expensive calculations
+      if (tradeUsdValue < minThreshold) {
+        logger.info(
+          {
+            tradeId: trade.id,
+            tradeUsdValue: tradeUsdValue.toFixed(2),
+            minThreshold: minThreshold.toFixed(2),
+            availableLiquidity: availableLiquidity?.toFixed(2) || 'unknown',
+            reason: 'Below market-aware minimum threshold',
+          },
+          `🚫 Trade filtered: $${tradeUsdValue.toFixed(0)} < $${minThreshold.toFixed(0)} minimum (market-aware threshold)`
+        );
+        await this.incrementStat('filtered_market_aware_minimum');
+        return null;
+      }
+
       // Calculate impact percentage using configured method (liquidity/volume/oi)
       const impactResult = await this.oiCalculator.calculateImpactPercentage(
         tradeUsdValue,
@@ -113,42 +161,23 @@ class SignalDetector {
         trade.outcome
       );
 
-      // Hybrid scoring: Check both relative impact AND absolute size
-      const absoluteSizeThreshold =
-        this.getAbsoluteSizeThreshold(tradeUsdValue);
-      const meetsAbsoluteThreshold = absoluteSizeThreshold.meetsThreshold;
-
-      // Accept trade if EITHER threshold is met
-      if (!impactResult.meetsThreshold && !meetsAbsoluteThreshold) {
+      // Now check if trade meets impact threshold (it already passed minimum size)
+      if (!impactResult.meetsThreshold) {
         logger.info(
           {
             tradeId: trade.id,
             tradeUsdValue: tradeUsdValue.toFixed(2),
             openInterest: marketData.openInterest,
             impactPercentage: impactResult.impactPercentage.toFixed(2),
-            absoluteThreshold: absoluteSizeThreshold.threshold,
             method: impactResult.method,
             relativeThreshold: impactResult.threshold,
-            reason: `Below both thresholds`,
+            reason: `Below impact threshold`,
             details: impactResult.details,
           },
-          `🚫 Trade filtered: Both impact (${impactResult.impactPercentage.toFixed(2)}%) and size ($${tradeUsdValue.toFixed(0)}) too low`
+          `🚫 Trade filtered: Impact too low (${impactResult.impactPercentage.toFixed(2)}% < ${impactResult.threshold}% threshold)`
         );
         await this.incrementStat('filtered_oi_threshold');
         return null;
-      }
-
-      // Log when absolute size overrides relative impact
-      if (!impactResult.meetsThreshold && meetsAbsoluteThreshold) {
-        logger.info(
-          {
-            tradeId: trade.id,
-            tradeUsdValue: tradeUsdValue.toFixed(2),
-            impactPercentage: impactResult.impactPercentage.toFixed(2),
-            reason: 'Passed due to absolute size despite low relative impact',
-          },
-          `💰 Large trade detected via absolute size threshold`
-        );
       }
 
       // Track trades that passed OI filter
@@ -171,10 +200,9 @@ class SignalDetector {
         tradeUsdValue,
         timestamp: trade.timestamp,
         outcome: trade.outcome,
-        // Add info about absolute size if it was the reason for passing
-        absoluteSizeTier: absoluteSizeThreshold.tier,
-        passedViaAbsoluteSize:
-          !impactResult.meetsThreshold && meetsAbsoluteThreshold,
+        // Keep for backwards compatibility but set to defaults
+        absoluteSizeTier: 'significant',
+        passedViaAbsoluteSize: false,
       };
 
       logger.info(
@@ -186,12 +214,10 @@ class SignalDetector {
           impactPercentage: impactResult.impactPercentage.toFixed(2),
           method: impactResult.method,
           threshold: impactResult.threshold,
-          absoluteSizeTier: absoluteSizeThreshold.tier,
-          passedViaSize: signal.passedViaAbsoluteSize,
+          minThreshold: minThreshold.toFixed(2),
+          availableLiquidity: availableLiquidity?.toFixed(2) || 'unknown',
         },
-        signal.passedViaAbsoluteSize
-          ? `🚨 Large trade detected ($${(tradeUsdValue / 1000).toFixed(0)}k ${absoluteSizeThreshold.tier} trade)`
-          : `🚨 Large trade detected (${impactResult.method} impact: ${impactResult.impactPercentage.toFixed(2)}%)`
+        `🚨 Large trade detected (${impactResult.method} impact: ${impactResult.impactPercentage.toFixed(2)}%, passed $${minThreshold.toFixed(0)} market-aware minimum)`
       );
 
       return signal;
@@ -199,29 +225,6 @@ class SignalDetector {
       logger.error({ error, tradeId: trade.id }, 'Failed to analyze trade');
       return null;
     }
-  }
-
-  /**
-   * Get absolute size threshold for trade
-   * Tiered system: $10k, $25k, $50k, $100k
-   */
-  private getAbsoluteSizeThreshold(tradeUsdValue: number): {
-    meetsThreshold: boolean;
-    threshold: number;
-    tier: string;
-  } {
-    if (tradeUsdValue >= 100000) {
-      return { meetsThreshold: true, threshold: 100000, tier: 'whale' };
-    } else if (tradeUsdValue >= 50000) {
-      return { meetsThreshold: true, threshold: 50000, tier: 'large' };
-    } else if (tradeUsdValue >= 25000) {
-      return { meetsThreshold: true, threshold: 25000, tier: 'significant' };
-    } else if (tradeUsdValue >= 10000) {
-      return { meetsThreshold: true, threshold: 10000, tier: 'notable' };
-    }
-
-    // Below $10k, doesn't meet absolute threshold
-    return { meetsThreshold: false, threshold: 10000, tier: 'small' };
   }
 
   /**

@@ -45,6 +45,10 @@ export interface DetectionThresholds {
 
   // Error handling configuration
   skipTradesOnProxyError: boolean; // Skip trades when proxy resolution fails with GraphQL errors (default: false)
+
+  // Market-aware minimum thresholds
+  absoluteMinUsd: number; // Absolute minimum trade size in USD (default: 5000)
+  relativeLiquidityFactor: number; // Minimum fraction of available liquidity (default: 0.5)
 }
 
 /**
@@ -93,6 +97,10 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
 
   // Error handling
   skipTradesOnProxyError: false,
+
+  // Market-aware minimum thresholds
+  absoluteMinUsd: 5000,
+  relativeLiquidityFactor: 0.5,
 };
 
 /**
@@ -195,5 +203,13 @@ export function getThresholds(): DetectionThresholds {
     skipTradesOnProxyError:
       process.env['SKIP_TRADES_ON_PROXY_ERROR'] === 'true' ||
       DEFAULT_THRESHOLDS.skipTradesOnProxyError,
+
+    // Market-aware minimum thresholds
+    absoluteMinUsd:
+      Number(process.env['ABSOLUTE_MIN_USD']) ||
+      DEFAULT_THRESHOLDS.absoluteMinUsd,
+    relativeLiquidityFactor:
+      Number(process.env['RELATIVE_LIQUIDITY_FACTOR']) ||
+      DEFAULT_THRESHOLDS.relativeLiquidityFactor,
   };
 }

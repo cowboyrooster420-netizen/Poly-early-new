@@ -260,7 +260,7 @@ export class OiCalculationService {
     };
   }
 
-  private async getAvailableLiquidity(
+  public async getAvailableLiquidity(
     marketId: string,
     tradeSide: 'buy' | 'sell',
     outcome?: 'yes' | 'no'
