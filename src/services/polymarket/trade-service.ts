@@ -462,26 +462,19 @@ class TradeService {
       );
 
       // Check fingerprint status using decision framework
+      // NOTE: We no longer skip on wallet errors - alert-scorer handles error fingerprints
+      // by giving them a baseline suspicious score (see alert-scorer.ts:130-194)
       if (walletFingerprint.status === 'error') {
-        const decision = DecisionFramework.handleWalletAnalysisError(
-          new Error(
-            walletFingerprint.errorReason || 'Unknown wallet analysis error'
-          ),
+        logger.warn(
           {
-            address: trade.taker,
+            wallet: trade.taker.substring(0, 10) + '...',
             tradeId: trade.id,
-            dataSource: 'both', // Both subgraph and data API failed
-          }
-        );
-
-        await DecisionFramework.executeDecision(decision, {
-          onSkip: async () => {
-            await signalDetector.incrementStat('filtered_fingerprint_error');
+            errorReason: walletFingerprint.errorReason,
           },
-        });
-
-        // For wallet analysis errors, we always skip
-        return;
+          '⚠️ Wallet analysis failed - continuing with error fingerprint (will be scored as suspicious)'
+        );
+        await signalDetector.incrementStat('wallet_error_but_continued');
+        // Continue to scoring - alert-scorer will handle this
       }
 
       if (walletFingerprint.status === 'partial') {

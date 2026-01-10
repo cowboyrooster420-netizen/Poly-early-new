@@ -59,20 +59,30 @@ class AlertScorerService {
   private readonly MIN_OI_USD: number;
   private readonly MIN_WALLET_SCORE: number;
 
+  // Classification thresholds (configurable via env vars)
+  private readonly ALERT_THRESHOLD: number;
+  private readonly LOG_THRESHOLD: number;
+
   private constructor() {
     // Load thresholds from env vars with defaults
     this.MIN_TRADE_SIZE_USD = Number(process.env['MIN_TRADE_SIZE_USD']) || 1000;
     this.MIN_OI_USD = Number(process.env['MIN_OI_USD']) || 5000;
     this.MIN_WALLET_SCORE = Number(process.env['MIN_WALLET_SCORE']) || 20; // Reduced from 40 - now 20/100 (actually 10/50 raw score)
 
+    // Alert classification thresholds - lowered defaults for better detection
+    this.ALERT_THRESHOLD = Number(process.env['ALERT_THRESHOLD']) || 50; // Was hardcoded at 70
+    this.LOG_THRESHOLD = Number(process.env['LOG_THRESHOLD']) || 30; // Was hardcoded at 50
+
     logger.info(
       {
         minTradeSize: this.MIN_TRADE_SIZE_USD,
         minOi: this.MIN_OI_USD,
         minWalletScore: this.MIN_WALLET_SCORE,
+        alertThreshold: this.ALERT_THRESHOLD,
+        logThreshold: this.LOG_THRESHOLD,
         weights: { wallet: '60%', impact: '40%' },
       },
-      'Alert scorer service initialized (v4 - extremity removed)'
+      'Alert scorer service initialized (v5 - configurable thresholds)'
     );
   }
 
@@ -528,8 +538,13 @@ class AlertScorerService {
       const lastTradeStr = await redis.get(lastTradeKey);
 
       if (lastTradeStr === null) {
-        // No record = assume 0 hours (conservative)
-        return 1.0;
+        // No record = first trade we're seeing in this market = treat as dormant
+        // This gives the 2.0x boost for first suspicious activity in a market
+        logger.debug(
+          { marketId },
+          'No prior trade record - treating as dormant market (2.0x boost)'
+        );
+        return 2.0;
       }
 
       const lastTradeTime = parseInt(lastTradeStr, 10);
@@ -548,12 +563,17 @@ class AlertScorerService {
   /**
    * Classify final score
    * Max possible: 60 (wallet) + 40 (impact) = 100
+   * Thresholds now configurable via ALERT_THRESHOLD and LOG_THRESHOLD env vars
    */
   private classify(score: number): AlertClassification {
-    if (score >= 90) return 'ALERT_STRONG_INSIDER';
-    if (score >= 80) return 'ALERT_HIGH_CONFIDENCE';
-    if (score >= 70) return 'ALERT_MEDIUM_CONFIDENCE';
-    if (score >= 50) return 'LOG_ONLY';
+    // Use configurable thresholds with tiered classification
+    const strongThreshold = this.ALERT_THRESHOLD + 30; // e.g., 80 if ALERT_THRESHOLD=50
+    const highThreshold = this.ALERT_THRESHOLD + 15; // e.g., 65 if ALERT_THRESHOLD=50
+
+    if (score >= strongThreshold) return 'ALERT_STRONG_INSIDER';
+    if (score >= highThreshold) return 'ALERT_HIGH_CONFIDENCE';
+    if (score >= this.ALERT_THRESHOLD) return 'ALERT_MEDIUM_CONFIDENCE';
+    if (score >= this.LOG_THRESHOLD) return 'LOG_ONLY';
     return 'IGNORE';
   }
 
