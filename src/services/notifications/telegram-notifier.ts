@@ -144,9 +144,9 @@ class TelegramNotifierService {
     message += `${displayQuestion}\n`;
     message += `[View on Polymarket](${polymarketUrl})\n\n`;
 
-    // Trade details
+    // Trade details (use tradeUsdValue which is shares * price)
     message += `📊 *Trade Details*\n`;
-    message += `• Size: $${parseFloat(alert.tradeSize).toLocaleString()}\n`;
+    message += `• Size: $${alert.tradeSignal.tradeUsdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
     message += `• Side: ${alert.tradeSide}\n`;
     message += `• Price: ${(parseFloat(alert.tradePrice) * 100).toFixed(1)}¢\n`;
     message += `• Time: ${timestamp} UTC\n\n`;

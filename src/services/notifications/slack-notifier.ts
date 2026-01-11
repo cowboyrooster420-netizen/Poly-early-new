@@ -153,7 +153,7 @@ class SlackNotifierService {
           },
           {
             type: 'mrkdwn',
-            text: `*Trade Size:*\n$${parseFloat(alert.tradeSize).toLocaleString()}`,
+            text: `*Trade Size:*\n$${alert.tradeSignal.tradeUsdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
           },
           {
             type: 'mrkdwn',
