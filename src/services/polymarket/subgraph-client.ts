@@ -443,8 +443,8 @@ class PolymarketSubgraphClient {
       headers: { 'Content-Type': 'application/json' },
     });
 
-    // Rate limit: 10 requests per second (conservative for public API)
-    this.rateLimiter = new SubgraphRateLimiter(10);
+    // Rate limit: 3 requests per second (Goldsky public API has strict limits)
+    this.rateLimiter = new SubgraphRateLimiter(3);
 
     logger.info(
       'Polymarket subgraph client initialized with wallet mapping support'
@@ -957,21 +957,28 @@ class PolymarketSubgraphClient {
       return await fn();
     } catch (error) {
       const isAxiosError = error instanceof AxiosError;
+      const isAxiosErr = isAxiosError ? error : null;
+      const statusCode = isAxiosErr?.response?.status;
+      const isRateLimited = statusCode === 429;
       const isRetryable =
         isAxiosError &&
         (error.response === undefined ||
-          error.response.status === 429 ||
-          error.response.status >= 500);
+          statusCode === 429 ||
+          (statusCode !== undefined && statusCode >= 500));
 
       if (isRetryable && attempt < this.maxRetries) {
-        const delay = this.baseRetryDelay * Math.pow(2, attempt - 1);
+        // Back off more aggressively for rate limits (429)
+        const baseDelay = isRateLimited ? 2000 : this.baseRetryDelay;
+        const delay = baseDelay * Math.pow(2, attempt - 1);
         logger.warn(
           {
             attempt,
             delay,
+            statusCode,
+            isRateLimited,
             error: error instanceof Error ? error.message : 'Unknown error',
           },
-          'Retrying subgraph request'
+          `Retrying subgraph request${isRateLimited ? ' (rate limited)' : ''}`
         );
 
         await this.sleep(delay);

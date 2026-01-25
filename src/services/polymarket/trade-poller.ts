@@ -15,11 +15,16 @@ class TradePollingService {
   private pollInterval: NodeJS.Timeout | null = null;
   private lastPollTimestamp: number = Date.now();
   private processedTradeIds = new Set<string>();
-  private readonly POLL_INTERVAL_MS = 30000; // 30 seconds
+  // Poll interval configurable via env var (default 60 seconds to reduce Goldsky load)
+  private readonly POLL_INTERVAL_MS =
+    Number(process.env['TRADE_POLL_INTERVAL_MS']) || 60000;
   private readonly MAX_PROCESSED_IDS = 10000; // Prevent memory leak
 
   private constructor() {
-    logger.info('Trade polling service initialized');
+    logger.info(
+      { pollIntervalMs: this.POLL_INTERVAL_MS },
+      `Trade polling service initialized (interval: ${this.POLL_INTERVAL_MS / 1000}s)`
+    );
   }
 
   public static getInstance(): TradePollingService {
