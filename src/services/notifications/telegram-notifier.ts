@@ -135,35 +135,82 @@ class TelegramNotifierService {
         ? alert.marketQuestion.substring(0, maxQuestionLen) + '...'
         : alert.marketQuestion;
 
+    // Calculate what they're betting on
+    const price = parseFloat(alert.tradePrice);
+    const outcome = alert.tradeSignal.outcome.toUpperCase() || 'UNKNOWN';
+    const bettingPrice = (price * 100).toFixed(1);
+
+    // Format market OI
+    const marketOI = parseFloat(alert.tradeSignal.openInterest);
+    const formattedOI =
+      marketOI >= 1000
+        ? `$${(marketOI / 1000).toFixed(1)}k`
+        : `$${marketOI.toFixed(0)}`;
+
     // Build message
     let message = `${emoji} *INSIDER SIGNAL DETECTED*\n`;
-    message += `Score: *${alert.confidenceScore}/100* (${classificationDisplay})\n\n`;
+    message += `Score: *${alert.confidenceScore}/100* (${classificationDisplay})\n`;
+
+    // Data confidence warning if low
+    if (
+      alert.walletFingerprint.confidenceLevel === 'low' ||
+      alert.walletFingerprint.confidenceLevel === 'none'
+    ) {
+      message += `⚠️ _Limited wallet data available_\n`;
+    }
+    message += `\n`;
 
     // Market info
     message += `🎯 *Market*\n`;
     message += `${displayQuestion}\n`;
+    message += `• OI: ${formattedOI}\n`;
     message += `[View on Polymarket](${polymarketUrl})\n\n`;
 
-    // Trade details (use tradeUsdValue which is shares * price)
+    // Trade details
     message += `📊 *Trade Details*\n`;
+    message += `• Position: ${alert.tradeSide} ${outcome} @ ${bettingPrice}¢\n`;
     message += `• Size: $${alert.tradeSignal.tradeUsdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
-    message += `• Side: ${alert.tradeSide}\n`;
-    message += `• Price: ${(parseFloat(alert.tradePrice) * 100).toFixed(1)}¢\n`;
+    message += `• Impact: ${alert.tradeSignal.impactPercentage.toFixed(2)}% of ${alert.tradeSignal.impactMethod}\n`;
     message += `• Time: ${timestamp} UTC\n\n`;
 
-    // Score breakdown (weighted contributions)
+    // Score breakdown with multipliers
     message += `📈 *Score Breakdown*\n`;
-    message += `• Wallet (60%): ${alert.scoreBreakdown.walletContribution}pts\n`;
-    message += `• Impact (40%): ${alert.scoreBreakdown.impactContribution}pts\n\n`;
+    message += `• Wallet (60%): ${alert.scoreBreakdown.walletContribution}pts (raw: ${alert.scoreBreakdown.walletScore})\n`;
+    message += `• Impact (40%): ${alert.scoreBreakdown.impactContribution}pts (raw: ${alert.scoreBreakdown.impactScore})\n`;
 
-    // Wallet analysis
-    message += `🔍 *Wallet Analysis*\n`;
+    // Show active multipliers
+    const multipliers: string[] = [];
+    if (alert.scoreBreakdown && 'marketSize' in alert.scoreBreakdown) {
+      // Access from the full alert score if available
+    }
+    // Check for multiplier boosts based on market size
+    if (marketOI < 25000) {
+      multipliers.push('🔥 Small market (2x)');
+    } else if (marketOI < 50000) {
+      multipliers.push('📈 Medium market (1.5x)');
+    }
+
+    if (multipliers.length > 0) {
+      message += `• Boosts: ${multipliers.join(', ')}\n`;
+    }
+    message += `\n`;
+
+    // Wallet analysis - Polymarket specific
+    message += `🔍 *Wallet Profile*\n`;
     message += polygonscanUrl
       ? `• Address: [\`${walletShort}\`](${polygonscanUrl})\n`
       : `• Address: \`${walletShort}\`\n`;
-    message += `• Age: ${alert.walletFingerprint.metadata.walletAgeDays} days\n`;
-    message += `• Transactions: ${alert.walletFingerprint.metadata.totalTransactions}\n`;
-    message += `• PM Netflow: ${alert.walletFingerprint.metadata.polymarketNetflowPercentage.toFixed(1)}%\n`;
+    message += `• Account Age: ${alert.walletFingerprint.metadata.walletAgeDays} days\n`;
+    message += `• PM Trades: ${alert.walletFingerprint.subgraphMetadata.polymarketTradeCount} total\n`;
+    message += `• PM Volume: $${alert.walletFingerprint.subgraphMetadata.polymarketVolumeUSD.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} lifetime\n`;
+
+    // Position concentration
+    const concentration =
+      alert.walletFingerprint.subgraphMetadata.maxPositionConcentration;
+    if (concentration > 0) {
+      message += `• Concentration: ${(concentration * 100).toFixed(0)}% in top market\n`;
+    }
+
     message += `• CEX Funded: ${alert.walletFingerprint.flags.cexFunded ? '✅ Yes' : '❌ No'}\n`;
 
     if (alert.walletFingerprint.metadata.cexFundingSource !== null) {
@@ -183,7 +230,14 @@ class TelegramNotifierService {
         message += `• 🎯 High PM netflow\n`;
       if (alert.walletFingerprint.flags.singlePurpose)
         message += `• 🔒 Single-purpose\n`;
+      if (alert.walletFingerprint.subgraphFlags.freshFatBet)
+        message += `• 💰 Fresh fat bet pattern\n`;
+      if (alert.walletFingerprint.subgraphFlags.highConcentration)
+        message += `• 🎲 High concentration\n`;
     }
+
+    // Data source indicator
+    message += `\n_Data: ${alert.walletFingerprint.subgraphMetadata.dataSource}_`;
 
     return message;
   }
