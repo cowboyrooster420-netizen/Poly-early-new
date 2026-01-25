@@ -303,6 +303,7 @@ class TradeService {
           tradeId: tradeWithMarketId.id,
           marketId: market.id,
           assetId,
+          source: tradeWithMarketId.source,
           side: tradeWithMarketId.side,
           size: tradeWithMarketId.size,
           price: tradeWithMarketId.price,
@@ -310,7 +311,7 @@ class TradeService {
           maker: tradeWithMarketId.maker.substring(0, 8) + '...' || 'unknown',
           taker: tradeWithMarketId.taker.substring(0, 8) + '...' || 'unknown',
         },
-        'Processing trade'
+        `Processing trade (${tradeWithMarketId.source})`
       );
 
       // Store trade to database
@@ -327,16 +328,34 @@ class TradeService {
       // Increment counter
       this.tradeCount++;
 
-      // Trigger signal detection pipeline
-      logger.debug(
-        { tradeId: tradeWithMarketId.id },
-        'Starting signal detection pipeline'
-      );
-      await this.detectSignals(tradeWithMarketId, market.question, market.slug);
-      logger.debug(
-        { tradeId: tradeWithMarketId.id },
-        'Signal detection completed'
-      );
+      // Only run signal detection on subgraph trades
+      // WebSocket trades have potentially incorrect size (order size vs taker fill size)
+      // Subgraph trades have accurate maker/taker amounts from on-chain data
+      if (tradeWithMarketId.source === 'subgraph') {
+        logger.debug(
+          { tradeId: tradeWithMarketId.id, source: 'subgraph' },
+          'Starting signal detection pipeline'
+        );
+        await this.detectSignals(
+          tradeWithMarketId,
+          market.question,
+          market.slug
+        );
+        logger.debug(
+          { tradeId: tradeWithMarketId.id },
+          'Signal detection completed'
+        );
+      } else {
+        logger.debug(
+          {
+            tradeId: tradeWithMarketId.id,
+            source: tradeWithMarketId.source,
+            size: tradeWithMarketId.size,
+            taker: tradeWithMarketId.taker.substring(0, 10) + '...',
+          },
+          'Skipping signal detection for non-subgraph trade (stored for reference only)'
+        );
+      }
     } catch (error) {
       // Log the error with context
       logger.error(
@@ -693,6 +712,7 @@ class TradeService {
           maker: t.maker,
           taker: t.taker,
           timestamp: t.timestamp.getTime(),
+          source: 'subgraph' as const, // Historical data from DB
         })
       );
     } catch (error) {
@@ -745,6 +765,7 @@ class TradeService {
           maker: t.maker,
           taker: t.taker,
           timestamp: t.timestamp.getTime(),
+          source: 'subgraph' as const, // Historical data from DB
         })
       );
     } catch (error) {

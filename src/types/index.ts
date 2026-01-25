@@ -20,6 +20,13 @@ export interface PolymarketMarket {
   endDate?: string;
 }
 
+/**
+ * Source of trade data - determines processing behavior
+ * - websocket: Real-time but may have incorrect size (order size vs fill size)
+ * - subgraph: Delayed (~30s) but has accurate maker/taker amounts
+ */
+export type TradeDataSource = 'websocket' | 'subgraph';
+
 export interface PolymarketTrade {
   id: string;
   marketId: string;
@@ -31,6 +38,8 @@ export interface PolymarketTrade {
   taker: string;
   outcome: 'yes' | 'no';
   transactionHash?: string;
+  /** Source of trade data - only subgraph trades trigger alerts */
+  source: TradeDataSource;
 }
 
 export interface OrderBook {

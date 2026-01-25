@@ -419,8 +419,10 @@ class PolymarketWebSocketService {
       }
 
       // Convert Polymarket message to our trade format
+      // Note: WebSocket trades have potentially incorrect size (order size vs taker fill size)
+      // Signal detection only runs on subgraph trades which have accurate amounts
       const trade: PolymarketTrade = {
-        id: `${msg.asset_id || msg.market}-${msg.timestamp || Date.now()}`,
+        id: `ws-${msg.asset_id || msg.market}-${msg.timestamp || Date.now()}`,
         marketId: msg.asset_id || msg.market || '',
         side: msg.side === 'BUY' ? 'buy' : 'sell',
         size: msg.size || '0',
@@ -429,6 +431,7 @@ class PolymarketWebSocketService {
         maker,
         taker,
         outcome: 'yes', // Will be determined by asset_id mapping
+        source: 'websocket',
         ...(transactionHash ? { transactionHash } : {}),
       };
 

@@ -278,6 +278,7 @@ class TradePollingService {
       maker: subgraphTrade.maker,
       taker: takerAddress,
       outcome,
+      source: 'subgraph',
     };
 
     logger.debug(
