@@ -286,15 +286,29 @@ class TradePollingService {
       source: 'subgraph',
     };
 
-    logger.debug(
+    // Detailed logging for trade conversion debugging
+    logger.info(
       {
         tradeId: polyTrade.id,
         marketId: market.id,
+        // Raw subgraph data
+        makerAssetId: subgraphTrade.makerAssetId,
+        takerAssetId: subgraphTrade.takerAssetId,
+        makerAmountFilled: subgraphTrade.makerAmountFilled,
+        takerAmountFilled: subgraphTrade.takerAmountFilled,
+        // Derived values
+        takerSellingOutcome,
         side,
         outcome,
-        size: polyTrade.size,
-        price: polyTrade.price,
+        outcomeAmount: outcomeAmount.toFixed(2),
+        usdcAmount: usdcAmount.toFixed(2),
+        price: price.toFixed(4),
+        // Market token IDs for reference
+        yesTokenId: market.clobTokenIdYes,
+        noTokenId: market.clobTokenIdNo,
+        // Addresses
         taker: takerAddress.substring(0, 10) + '...',
+        maker: subgraphTrade.maker.substring(0, 10) + '...',
       },
       'Converted subgraph trade'
     );
