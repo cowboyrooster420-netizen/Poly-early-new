@@ -415,8 +415,8 @@ class PolymarketSubgraphClient {
   private readonly walletClient: AxiosInstance;
   private readonly pnlClient: AxiosInstance;
   private readonly rateLimiter: SubgraphRateLimiter;
-  private readonly maxRetries = 3;
-  private readonly baseRetryDelay = 500;
+  private readonly maxRetries = 5;
+  private readonly baseRetryDelay = 1000;
 
   private constructor() {
     this.activityClient = axios.create({
@@ -443,8 +443,8 @@ class PolymarketSubgraphClient {
       headers: { 'Content-Type': 'application/json' },
     });
 
-    // Rate limit: 3 requests per second (Goldsky public API has strict limits)
-    this.rateLimiter = new SubgraphRateLimiter(3);
+    // Rate limit: 1 request per second (Goldsky public API has very strict limits)
+    this.rateLimiter = new SubgraphRateLimiter(1);
 
     logger.info(
       'Polymarket subgraph client initialized with wallet mapping support'
@@ -968,7 +968,7 @@ class PolymarketSubgraphClient {
 
       if (isRetryable && attempt < this.maxRetries) {
         // Back off more aggressively for rate limits (429)
-        const baseDelay = isRateLimited ? 2000 : this.baseRetryDelay;
+        const baseDelay = isRateLimited ? 5000 : this.baseRetryDelay;
         const delay = baseDelay * Math.pow(2, attempt - 1);
         logger.warn(
           {
