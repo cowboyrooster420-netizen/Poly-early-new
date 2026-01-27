@@ -231,26 +231,32 @@ class TradePollingService {
       return null;
     }
 
-    // Determine trade direction and outcome
-    // If taker is selling outcome token (maker buying), it's a SELL
-    const takerSellingOutcome =
-      takerAsset !== '0' && takerAsset === nonUSDCAsset;
-    const side: 'buy' | 'sell' = takerSellingOutcome ? 'sell' : 'buy';
+    // Determine which side has USDC vs outcome tokens
+    // makerAssetId = what the maker is providing
+    // takerAssetId = what the taker is providing
+    const makerProvidesUSDC = makerAsset === '0';
+    const takerProvidesUSDC = takerAsset === '0';
+
+    // Calculate amounts based on asset types (more explicit than before)
+    // USDC amount comes from whoever is providing USDC
+    // Outcome amount comes from whoever is providing the token
+    const usdcAmount = makerProvidesUSDC
+      ? usdcToUsd(subgraphTrade.makerAmountFilled)
+      : usdcToUsd(subgraphTrade.takerAmountFilled);
+
+    const outcomeAmount = makerProvidesUSDC
+      ? usdcToUsd(subgraphTrade.takerAmountFilled)
+      : usdcToUsd(subgraphTrade.makerAmountFilled);
+
+    // Determine trade direction from taker's perspective
+    // If taker provides USDC, they are BUYING tokens
+    // If taker provides tokens, they are SELLING tokens
+    const side: 'buy' | 'sell' = takerProvidesUSDC ? 'buy' : 'sell';
 
     // The outcome asset is the non-USDC asset
     const outcomeAssetId = nonUSDCAsset;
     const outcome: 'yes' | 'no' =
       market.clobTokenIdYes === outcomeAssetId ? 'yes' : 'no';
-
-    // Calculate size and price
-    // Size is the outcome token amount
-    const outcomeAmount = takerSellingOutcome
-      ? usdcToUsd(subgraphTrade.takerAmountFilled)
-      : usdcToUsd(subgraphTrade.makerAmountFilled);
-
-    const usdcAmount = takerSellingOutcome
-      ? usdcToUsd(subgraphTrade.makerAmountFilled)
-      : usdcToUsd(subgraphTrade.takerAmountFilled);
 
     // Validate amounts
     if (outcomeAmount <= 0 || usdcAmount < 0) {
@@ -261,6 +267,8 @@ class TradePollingService {
           usdcAmount,
           makerAmountFilled: subgraphTrade.makerAmountFilled,
           takerAmountFilled: subgraphTrade.takerAmountFilled,
+          makerProvidesUSDC,
+          takerProvidesUSDC,
         },
         'Invalid trade amounts detected'
       );
@@ -269,6 +277,26 @@ class TradePollingService {
 
     // Price is USDC per outcome token
     const price = usdcAmount / outcomeAmount;
+
+    // Sanity check: price should be between 0 and 1 (it's a probability)
+    if (price < 0 || price > 1) {
+      logger.error(
+        {
+          tradeId: subgraphTrade.id,
+          price,
+          usdcAmount,
+          outcomeAmount,
+          makerAssetId: makerAsset,
+          takerAssetId: takerAsset,
+          makerAmountFilled: subgraphTrade.makerAmountFilled,
+          takerAmountFilled: subgraphTrade.takerAmountFilled,
+          makerProvidesUSDC,
+          takerProvidesUSDC,
+        },
+        'PRICE SANITY CHECK FAILED: Price outside 0-1 range - possible amount inversion bug'
+      );
+      return null;
+    }
 
     // Orderbook subgraph already provides actual user addresses (not proxy addresses)
     const takerAddress = subgraphTrade.taker;
@@ -296,13 +324,17 @@ class TradePollingService {
         takerAssetId: subgraphTrade.takerAssetId,
         makerAmountFilled: subgraphTrade.makerAmountFilled,
         takerAmountFilled: subgraphTrade.takerAmountFilled,
+        // Asset type determination
+        makerProvidesUSDC,
+        takerProvidesUSDC,
         // Derived values
-        takerSellingOutcome,
         side,
         outcome,
         outcomeAmount: outcomeAmount.toFixed(2),
         usdcAmount: usdcAmount.toFixed(2),
         price: price.toFixed(4),
+        // Computed USD value for this trade
+        tradeUsdValue: usdcAmount.toFixed(2),
         // Market token IDs for reference
         yesTokenId: market.clobTokenIdYes,
         noTokenId: market.clobTokenIdNo,
