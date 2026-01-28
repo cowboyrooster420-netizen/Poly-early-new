@@ -268,6 +268,19 @@ class MarketService {
   }
 
   /**
+   * Get all monitored condition IDs (for Data API queries)
+   */
+  public getMonitoredConditionIds(): string[] {
+    const conditionIds: string[] = [];
+    for (const market of this.monitoredMarkets.values()) {
+      if (market.conditionId) {
+        conditionIds.push(market.conditionId);
+      }
+    }
+    return conditionIds;
+  }
+
+  /**
    * Add a market to monitoring
    */
   public async addMarket(market: MarketConfig): Promise<void> {

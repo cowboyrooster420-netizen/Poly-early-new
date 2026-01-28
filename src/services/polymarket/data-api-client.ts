@@ -251,6 +251,75 @@ class PolymarketDataApiClient {
   }
 
   /**
+   * Fetch recent trades for specific markets (condition IDs)
+   * This is the main method for trade polling - replaces subgraph
+   * @param conditionIds Array of condition IDs to filter by
+   * @param limit Maximum number of trades to fetch (max 10000)
+   * @param minUsdValue Optional minimum USD value filter (uses CASH filterType)
+   * @returns Array of trades sorted by timestamp descending
+   */
+  public async getRecentTradesForMarkets(
+    conditionIds: string[],
+    limit: number = 500,
+    minUsdValue?: number
+  ): Promise<DataApiTrade[]> {
+    if (conditionIds.length === 0) {
+      logger.warn('No condition IDs provided for trade fetch');
+      return [];
+    }
+
+    try {
+      const params: Record<string, string | number | boolean> = {
+        limit,
+        takerOnly: true, // Only get real taker trades (not Exchange contract)
+        market: conditionIds.join(','),
+      };
+
+      // Use CASH filter if minimum USD value specified
+      if (minUsdValue && minUsdValue > 0) {
+        params['filterType'] = 'CASH';
+        params['filterAmount'] = minUsdValue;
+      }
+
+      const response = await this.client.get<DataApiTrade[]>('/trades', {
+        params,
+      });
+
+      const trades = response.data || [];
+
+      logger.info(
+        {
+          tradesFound: trades.length,
+          conditionIdsCount: conditionIds.length,
+          minUsdValue: minUsdValue || 0,
+          oldestTimestamp:
+            trades.length > 0
+              ? new Date(
+                  trades[trades.length - 1]!.timestamp * 1000
+                ).toISOString()
+              : null,
+          newestTimestamp:
+            trades.length > 0
+              ? new Date(trades[0]!.timestamp * 1000).toISOString()
+              : null,
+        },
+        'Fetched trades from Data API'
+      );
+
+      return trades;
+    } catch (error) {
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          conditionIdsCount: conditionIds.length,
+        },
+        'Failed to fetch trades from Data API'
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Get combined user data from Data API
    * This is the main method for wallet analysis
    */

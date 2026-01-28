@@ -1,13 +1,13 @@
-import { polymarketSubgraph } from './subgraph-client.js';
+import { polymarketDataApi, type DataApiTrade } from './data-api-client.js';
 import { tradeService } from './trade-service.js';
 import { marketService } from './market-service.js';
 import { logger } from '../../utils/logger.js';
-import { usdcToUsd } from '../../utils/decimals.js';
 import type { PolymarketTrade } from '../../types/index.js';
 
 /**
- * Trade polling service - fetches trades from orderbook subgraph
- * This is an alternative data source to WebSocket for getting trades with user addresses
+ * Trade polling service - fetches trades from Polymarket Data API
+ * This is the primary data source for accurate trade data with user addresses
+ * The Data API provides correct size/price (no atomic mint inversion issues)
  */
 class TradePollingService {
   private static instance: TradePollingService | null = null;
@@ -115,46 +115,43 @@ class TradePollingService {
   }
 
   /**
-   * Poll for recent trades from subgraph
+   * Poll for recent trades from Data API
+   * Uses the public /trades endpoint which provides accurate trade data
    */
   private async pollTrades(): Promise<void> {
     try {
-      // Get monitored asset IDs to filter trades
-      const assetIds = marketService.getMonitoredAssetIds();
+      // Get monitored condition IDs to filter trades
+      const conditionIds = marketService.getMonitoredConditionIds();
 
-      if (assetIds.length === 0) {
-        logger.warn('No monitored assets found - skipping trade poll');
+      if (conditionIds.length === 0) {
+        logger.warn('No monitored markets found - skipping trade poll');
         return;
       }
 
-      // Determine the "since" timestamp
-      // On first poll: bootstrap from last 2 minutes
-      // On subsequent polls: use last processed timestamp to never miss trades
-      const sinceTimestamp = this.lastProcessedTradeTimestamp
-        ? this.lastProcessedTradeTimestamp
-        : Math.floor(Date.now() / 1000) - 120; // Bootstrap: last 2 minutes
-
-      // Fetch all trades since last processed timestamp
-      const trades = await polymarketSubgraph.getRecentTrades(
-        sinceTimestamp,
-        1000,
-        assetIds
+      // Fetch trades from Data API
+      // The Data API returns most recent trades, sorted by timestamp desc
+      // Note: Data API doesn't support "since" timestamp filter, so we fetch
+      // recent trades and filter by our tracked IDs to avoid duplicates
+      const trades = await polymarketDataApi.getRecentTradesForMarkets(
+        conditionIds,
+        1000, // Fetch up to 1000 trades
+        this.MIN_TRADE_USD_PREFILTER > 0
+          ? this.MIN_TRADE_USD_PREFILTER
+          : undefined
       );
 
       if (trades.length === 0) {
-        logger.debug('No recent trades found in subgraph');
+        logger.debug('No recent trades found in Data API');
         return;
       }
 
-      const monitoredAssetIds = marketService.getMonitoredAssetIds();
       logger.info(
         {
           tradeCount: trades.length,
-          monitoredAssetCount: monitoredAssetIds.length,
-          sinceTimestamp,
-          isBootstrap: !this.lastProcessedTradeTimestamp,
+          monitoredConditionCount: conditionIds.length,
+          minUsdFilter: this.MIN_TRADE_USD_PREFILTER,
         },
-        'Processing trades from subgraph'
+        'Processing trades from Data API'
       );
 
       // Process trades in batches to avoid API rate limits during wallet analysis
@@ -176,44 +173,34 @@ class TradePollingService {
 
         for (const trade of batch) {
           try {
+            // Use transactionHash as unique ID (more reliable than Data API id)
+            const tradeKey =
+              trade.transactionHash ||
+              `${trade.timestamp}-${trade.proxyWallet}`;
+
             // Skip if already processed
-            if (this.processedTradeIds.has(trade.id)) {
+            if (this.processedTradeIds.has(tradeKey)) {
               continue;
             }
 
-            // Convert subgraph trade to our format
-            const polyTrade = await this.convertToPolymarketTrade(trade);
+            // Convert Data API trade to our format
+            const polyTrade = this.convertDataApiTrade(trade);
             if (polyTrade) {
-              // Pre-queue filter: skip small trades to reduce queue pressure
-              const tradeUsdValue =
-                parseFloat(polyTrade.size) * parseFloat(polyTrade.price);
-
-              if (
-                this.MIN_TRADE_USD_PREFILTER > 0 &&
-                tradeUsdValue < this.MIN_TRADE_USD_PREFILTER
-              ) {
-                logger.debug(
-                  {
-                    tradeId: polyTrade.id,
-                    tradeUsdValue: tradeUsdValue.toFixed(2),
-                    threshold: this.MIN_TRADE_USD_PREFILTER,
-                  },
-                  '⏭️ Skipping small trade (pre-queue filter)'
-                );
-                // Still mark as processed to avoid re-fetching
-                this.processedTradeIds.set(trade.id, Date.now());
-                continue;
-              }
+              // USD value is already filtered by Data API if MIN_TRADE_USD_PREFILTER > 0
+              const tradeUsdValue = trade.size * trade.price;
 
               logger.info(
                 {
                   tradeId: polyTrade.id,
                   marketId: polyTrade.marketId,
                   size: polyTrade.size,
+                  price: polyTrade.price,
                   tradeUsdValue: tradeUsdValue.toFixed(2),
+                  side: polyTrade.side,
+                  outcome: polyTrade.outcome,
                   taker: polyTrade.taker.substring(0, 10) + '...',
                 },
-                '📤 Sending trade to trade service'
+                '📤 Sending trade to trade service (from Data API)'
               );
               await tradeService.processTrade(polyTrade);
               newTradesCount++;
@@ -224,7 +211,7 @@ class TradePollingService {
             }
 
             // Mark as processed with current timestamp
-            this.processedTradeIds.set(trade.id, Date.now());
+            this.processedTradeIds.set(tradeKey, Date.now());
           } catch (tradeError) {
             logger.error(
               {
@@ -232,12 +219,11 @@ class TradePollingService {
                   tradeError instanceof Error
                     ? tradeError.message
                     : String(tradeError),
-                tradeId: trade.id,
-                makerAssetId: trade.makerAssetId,
-                takerAssetId: trade.takerAssetId,
+                transactionHash: trade.transactionHash,
+                conditionId: trade.conditionId,
                 timestamp: trade.timestamp,
               },
-              'Failed to process individual trade from subgraph'
+              'Failed to process individual trade from Data API'
             );
             // Continue processing other trades even if one fails
             continue;
@@ -260,14 +246,14 @@ class TradePollingService {
       }
 
       if (newTradesCount > 0) {
-        logger.info({ newTradesCount }, 'Processed new trades from subgraph');
+        logger.info({ newTradesCount }, 'Processed new trades from Data API');
       }
 
       // Update last processed timestamp to the newest trade's timestamp
       // Trades are sorted descending, so first trade is newest
       if (trades.length > 0 && trades[0]) {
-        const newestTimestamp = parseInt(trades[0].timestamp);
-        if (!isNaN(newestTimestamp)) {
+        const newestTimestamp = trades[0].timestamp;
+        if (newestTimestamp > 0) {
           this.lastProcessedTradeTimestamp = newestTimestamp;
           logger.debug(
             { lastProcessedTradeTimestamp: this.lastProcessedTradeTimestamp },
@@ -283,7 +269,7 @@ class TradePollingService {
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         },
-        'Failed to poll trades from subgraph - top level error'
+        'Failed to poll trades from Data API - top level error'
       );
     }
   }
@@ -342,210 +328,80 @@ class TradePollingService {
   }
 
   /**
-   * Convert subgraph trade to PolymarketTrade format
+   * Convert Data API trade to PolymarketTrade format
+   * Data API provides accurate trade data - no atomic mint issues
    */
-  private async convertToPolymarketTrade(subgraphTrade: {
-    id: string;
-    timestamp: string;
-    maker: string;
-    taker: string;
-    makerAssetId: string;
-    takerAssetId: string;
-    makerAmountFilled: string;
-    takerAmountFilled: string;
-    fee: string;
-  }): Promise<PolymarketTrade | null> {
-    // Need to determine which asset was bought/sold
-    // In CLOB, one side has USDC (collateral), other has outcome token
-    const makerAsset = subgraphTrade.makerAssetId;
-    const takerAsset = subgraphTrade.takerAssetId;
-
-    // One asset must be USDC ("0") and the other must be a monitored asset
-    const isUSDCTrade = makerAsset === '0' || takerAsset === '0';
-    if (!isUSDCTrade) {
-      logger.debug(
-        {
-          makerAssetId: makerAsset,
-          takerAssetId: takerAsset,
-        },
-        'Trade does not involve USDC - skipping'
-      );
-      return null;
-    }
-
-    // Find market by the non-USDC asset
-    const nonUSDCAsset = makerAsset === '0' ? takerAsset : makerAsset;
-    const market = marketService.getMarketByAssetId(nonUSDCAsset);
+  private convertDataApiTrade(trade: DataApiTrade): PolymarketTrade | null {
+    // Find market by condition ID
+    const market = marketService.getMarketByConditionId(trade.conditionId);
 
     if (!market) {
       logger.warn(
         {
-          makerAssetId: makerAsset,
-          takerAssetId: takerAsset,
-          nonUSDCAsset,
-          tradeId: subgraphTrade.id,
+          conditionId: trade.conditionId,
+          transactionHash: trade.transactionHash,
         },
-        'Non-USDC asset not in monitored markets - trade skipped'
+        'Trade conditionId not in monitored markets - skipping'
       );
       return null;
     }
 
-    // Determine which side has USDC vs outcome tokens
-    // makerAssetId = what the maker is providing
-    // takerAssetId = what the taker is providing
-    const makerProvidesUSDC = makerAsset === '0';
-    const takerProvidesUSDC = takerAsset === '0';
-
-    // Calculate amounts based on asset types (more explicit than before)
-    // USDC amount comes from whoever is providing USDC
-    // Outcome amount comes from whoever is providing the token
-    const usdcAmount = makerProvidesUSDC
-      ? usdcToUsd(subgraphTrade.makerAmountFilled)
-      : usdcToUsd(subgraphTrade.takerAmountFilled);
-
-    const outcomeAmount = makerProvidesUSDC
-      ? usdcToUsd(subgraphTrade.takerAmountFilled)
-      : usdcToUsd(subgraphTrade.makerAmountFilled);
-
-    // Validate amounts BEFORE division to prevent NaN/Infinity
-    if (outcomeAmount <= 0 || usdcAmount < 0) {
-      logger.warn(
-        {
-          tradeId: subgraphTrade.id,
-          outcomeAmount,
-          usdcAmount,
-          makerAmountFilled: subgraphTrade.makerAmountFilled,
-          takerAmountFilled: subgraphTrade.takerAmountFilled,
-          makerProvidesUSDC,
-          takerProvidesUSDC,
-        },
-        'Invalid trade amounts detected - skipping to prevent division by zero'
-      );
-      return null;
-    }
-
-    // Determine trade direction from taker's perspective
-    // The subgraph shows maker/taker asset flows, but we need taker's actual trade
-    //
-    // IMPORTANT: In Polymarket atomic mints, when the subgraph shows taker "providing"
-    // outcome tokens, they didn't actually sell tokens - they BOUGHT the opposite token.
-    // Example: If subgraph shows taker "sold" YES tokens, they actually BOUGHT NO tokens.
-    //
-    // To correctly represent the taker's trade (and calculate correct USD value):
-    // - If taker provides USDC: they are BUYING the outcome token (straightforward)
-    // - If taker "provides" tokens: they are BUYING the OPPOSITE outcome token
-    //   (flip side to 'buy', flip outcome, use complementary price)
-
-    const outcomeAssetId = nonUSDCAsset;
-    const subgraphOutcome: 'yes' | 'no' =
-      market.clobTokenIdYes === outcomeAssetId ? 'yes' : 'no';
-
-    let side: 'buy' | 'sell';
-    let outcome: 'yes' | 'no';
-    let finalPrice: number;
-
-    if (takerProvidesUSDC) {
-      // Taker paid USDC to buy the outcome token - straightforward
-      side = 'buy';
-      outcome = subgraphOutcome;
-      finalPrice = usdcAmount / outcomeAmount;
-    } else {
-      // Taker "provided" tokens - this is atomic mint representation
-      // The taker actually BOUGHT the opposite outcome token
-      // Their cost is outcomeAmount × (1 - subgraphPrice)
-      side = 'buy';
-      outcome = subgraphOutcome === 'yes' ? 'no' : 'yes';
-      const subgraphPrice = usdcAmount / outcomeAmount;
-      finalPrice = 1 - subgraphPrice;
-
-      logger.debug(
-        {
-          subgraphOutcome,
-          flippedOutcome: outcome,
-          subgraphPrice: subgraphPrice.toFixed(4),
-          takerPrice: finalPrice.toFixed(4),
-          takerCost: (outcomeAmount * finalPrice).toFixed(2),
-          makerCost: usdcAmount.toFixed(2),
-        },
-        'Flipped atomic mint trade to show taker perspective'
-      );
-    }
-
-    // Sanity check: finalPrice should be between 0 and 1 (it's a probability)
-    if (finalPrice < 0 || finalPrice > 1) {
+    // Validate price is in valid range (0-1)
+    if (trade.price < 0 || trade.price > 1) {
       logger.error(
         {
-          tradeId: subgraphTrade.id,
-          finalPrice,
-          usdcAmount,
-          outcomeAmount,
-          makerAssetId: makerAsset,
-          takerAssetId: takerAsset,
-          makerAmountFilled: subgraphTrade.makerAmountFilled,
-          takerAmountFilled: subgraphTrade.takerAmountFilled,
-          makerProvidesUSDC,
-          takerProvidesUSDC,
+          price: trade.price,
+          conditionId: trade.conditionId,
+          transactionHash: trade.transactionHash,
         },
-        'PRICE SANITY CHECK FAILED: Price outside 0-1 range - possible amount inversion bug'
+        'PRICE SANITY CHECK FAILED: Price outside 0-1 range'
       );
       return null;
     }
 
-    // Orderbook subgraph already provides actual user addresses (not proxy addresses)
-    const takerAddress = subgraphTrade.taker;
+    // Normalize outcome to lowercase 'yes' | 'no'
+    const outcome = trade.outcome.toLowerCase() as 'yes' | 'no';
+    if (outcome !== 'yes' && outcome !== 'no') {
+      logger.warn(
+        {
+          outcome: trade.outcome,
+          conditionId: trade.conditionId,
+        },
+        'Invalid outcome value - skipping'
+      );
+      return null;
+    }
 
-    // Calculate taker's actual USD cost for this trade
-    const takerUsdCost = outcomeAmount * finalPrice;
+    // Data API uses proxyWallet which is the actual taker
+    const takerAddress = trade.proxyWallet;
 
     const polyTrade: PolymarketTrade = {
-      id: `subgraph-${subgraphTrade.id}`,
+      id: `dataapi-${trade.transactionHash}`,
       marketId: market.id,
-      side,
-      size: outcomeAmount.toString(),
-      price: finalPrice.toFixed(4),
-      timestamp: parseInt(subgraphTrade.timestamp) * 1000,
-      maker: subgraphTrade.maker,
+      side: trade.side.toLowerCase() as 'buy' | 'sell',
+      size: trade.size.toString(),
+      price: trade.price.toFixed(4),
+      timestamp: trade.timestamp * 1000, // Convert to milliseconds
+      maker: '', // Data API doesn't provide maker address
       taker: takerAddress,
       outcome,
-      source: 'subgraph',
+      source: 'subgraph', // Keep as 'subgraph' for compatibility (triggers alerts)
     };
 
-    // Detailed logging for trade conversion debugging
-    logger.info(
+    // Log trade conversion for debugging
+    logger.debug(
       {
         tradeId: polyTrade.id,
         marketId: market.id,
-        // Raw subgraph data
-        makerAssetId: subgraphTrade.makerAssetId,
-        takerAssetId: subgraphTrade.takerAssetId,
-        makerAmountFilled: subgraphTrade.makerAmountFilled,
-        takerAmountFilled: subgraphTrade.takerAmountFilled,
-        // Asset type determination
-        makerProvidesUSDC,
-        takerProvidesUSDC,
-        // Subgraph vs Taker perspective (for atomic mint debugging)
-        subgraphOutcome: makerProvidesUSDC
-          ? market.clobTokenIdYes === nonUSDCAsset
-            ? 'yes'
-            : 'no'
-          : undefined,
-        wasFlipped: !takerProvidesUSDC,
-        // Final taker perspective values
-        side,
-        outcome,
-        outcomeAmount: outcomeAmount.toFixed(2),
-        takerPrice: finalPrice.toFixed(4),
-        // Computed USD values
-        takerUsdCost: takerUsdCost.toFixed(2),
-        makerUsdAmount: usdcAmount.toFixed(2),
-        // Market token IDs for reference
-        yesTokenId: market.clobTokenIdYes,
-        noTokenId: market.clobTokenIdNo,
-        // Addresses
+        side: polyTrade.side,
+        outcome: polyTrade.outcome,
+        size: trade.size,
+        price: trade.price,
+        usdValue: (trade.size * trade.price).toFixed(2),
         taker: takerAddress.substring(0, 10) + '...',
-        maker: subgraphTrade.maker.substring(0, 10) + '...',
+        txHash: trade.transactionHash.substring(0, 16) + '...',
       },
-      'Converted subgraph trade'
+      'Converted Data API trade'
     );
 
     return polyTrade;
