@@ -443,8 +443,8 @@ class PolymarketSubgraphClient {
       headers: { 'Content-Type': 'application/json' },
     });
 
-    // Rate limit: 1 request per second (Goldsky public API has very strict limits)
-    this.rateLimiter = new SubgraphRateLimiter(1);
+    // Rate limit: 2 requests per second (balance between speed and avoiding 429s)
+    this.rateLimiter = new SubgraphRateLimiter(2);
 
     logger.info(
       'Polymarket subgraph client initialized with wallet mapping support'
