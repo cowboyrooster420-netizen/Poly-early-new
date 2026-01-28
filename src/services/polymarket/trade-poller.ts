@@ -19,6 +19,9 @@ class TradePollingService {
   private readonly POLL_INTERVAL_MS =
     Number(process.env['TRADE_POLL_INTERVAL_MS']) || 60000;
   private readonly MAX_PROCESSED_IDS = 10000; // Prevent memory leak
+  // Batch processing to avoid API rate limits during wallet analysis
+  private readonly BATCH_SIZE = 10;
+  private readonly BATCH_DELAY_MS = 2000; // 2 seconds between batches
 
   private constructor() {
     logger.info(
@@ -104,65 +107,92 @@ class TradePollingService {
         'Processing trades from subgraph'
       );
 
-      // Process each trade
+      // Process trades in batches to avoid API rate limits during wallet analysis
       let newTradesCount = 0;
-      for (const trade of trades) {
-        try {
-          // Skip if already processed
-          if (this.processedTradeIds.has(trade.id)) {
+      const totalBatches = Math.ceil(trades.length / this.BATCH_SIZE);
+
+      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+        const batchStart = batchIndex * this.BATCH_SIZE;
+        const batch = trades.slice(batchStart, batchStart + this.BATCH_SIZE);
+
+        logger.debug(
+          {
+            batch: batchIndex + 1,
+            totalBatches,
+            batchSize: batch.length,
+          },
+          'Processing trade batch'
+        );
+
+        for (const trade of batch) {
+          try {
+            // Skip if already processed
+            if (this.processedTradeIds.has(trade.id)) {
+              continue;
+            }
+
+            // Convert subgraph trade to our format
+            const polyTrade = await this.convertToPolymarketTrade(trade);
+            if (polyTrade) {
+              logger.info(
+                {
+                  tradeId: polyTrade.id,
+                  marketId: polyTrade.marketId,
+                  size: polyTrade.size,
+                  taker: polyTrade.taker.substring(0, 10) + '...',
+                },
+                '📤 Sending trade to trade service'
+              );
+              await tradeService.processTrade(polyTrade);
+              newTradesCount++;
+              logger.info(
+                { tradeId: polyTrade.id },
+                '✅ Trade sent to service successfully'
+              );
+            }
+
+            // Mark as processed
+            this.processedTradeIds.add(trade.id);
+          } catch (tradeError) {
+            logger.error(
+              {
+                error:
+                  tradeError instanceof Error
+                    ? tradeError.message
+                    : String(tradeError),
+                tradeId: trade.id,
+                makerAssetId: trade.makerAssetId,
+                takerAssetId: trade.takerAssetId,
+                timestamp: trade.timestamp,
+              },
+              'Failed to process individual trade from subgraph'
+            );
+            // Continue processing other trades even if one fails
             continue;
           }
 
-          // Convert subgraph trade to our format
-          const polyTrade = await this.convertToPolymarketTrade(trade);
-          if (polyTrade) {
-            logger.info(
-              {
-                tradeId: polyTrade.id,
-                marketId: polyTrade.marketId,
-                size: polyTrade.size,
-                taker: polyTrade.taker.substring(0, 10) + '...',
-              },
-              '📤 Sending trade to trade service'
+          // Clean up old IDs to prevent memory leak
+          if (this.processedTradeIds.size > this.MAX_PROCESSED_IDS) {
+            const idsArray = Array.from(this.processedTradeIds);
+            const toRemove = idsArray.slice(
+              0,
+              idsArray.length - this.MAX_PROCESSED_IDS / 2
             );
-            await tradeService.processTrade(polyTrade);
-            newTradesCount++;
-            logger.info(
-              { tradeId: polyTrade.id },
-              '✅ Trade sent to service successfully'
-            );
+            for (const id of toRemove) {
+              this.processedTradeIds.delete(id);
+            }
           }
-
-          // Mark as processed
-          this.processedTradeIds.add(trade.id);
-        } catch (tradeError) {
-          logger.error(
-            {
-              error:
-                tradeError instanceof Error
-                  ? tradeError.message
-                  : String(tradeError),
-              tradeId: trade.id,
-              makerAssetId: trade.makerAssetId,
-              takerAssetId: trade.takerAssetId,
-              timestamp: trade.timestamp,
-            },
-            'Failed to process individual trade from subgraph'
-          );
-          // Continue processing other trades even if one fails
-          continue;
         }
 
-        // Clean up old IDs to prevent memory leak
-        if (this.processedTradeIds.size > this.MAX_PROCESSED_IDS) {
-          const idsArray = Array.from(this.processedTradeIds);
-          const toRemove = idsArray.slice(
-            0,
-            idsArray.length - this.MAX_PROCESSED_IDS / 2
+        // Wait between batches to let rate limiter recover (skip delay after last batch)
+        if (batchIndex < totalBatches - 1) {
+          logger.debug(
+            { delayMs: this.BATCH_DELAY_MS },
+            'Waiting between batches to avoid rate limits'
           );
-          for (const id of toRemove) {
-            this.processedTradeIds.delete(id);
-          }
+          await new Promise((resolve) =>
+            setTimeout(resolve, this.BATCH_DELAY_MS)
+          );
         }
       }
 
