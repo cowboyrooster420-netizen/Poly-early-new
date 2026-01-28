@@ -900,14 +900,39 @@ class PolymarketSubgraphClient {
   }
 
   /**
-   * Get combined wallet data from all subgraphs
-   * Now includes CLOB trading activity for accurate fingerprinting
+   * Get wallet data from subgraphs
+   * Fast mode (default): only CLOB activity - 1 API call
+   * Full mode: all 3 subgraphs - 3 API calls
    */
-  public async getWalletData(address: string): Promise<SubgraphWalletData> {
+  public async getWalletData(
+    address: string,
+    fastMode: boolean = true
+  ): Promise<SubgraphWalletData> {
     const normalizedAddress = address.toLowerCase();
 
     try {
-      // Query all subgraphs in parallel
+      // Fast mode: only CLOB activity (3x faster, sufficient for insider detection)
+      if (fastMode) {
+        const clobActivity = await this.getUserCLOBActivity(normalizedAddress);
+
+        logger.debug(
+          {
+            address: normalizedAddress,
+            fastMode: true,
+            clobTradeCount: clobActivity?.tradeCount ?? 0,
+          },
+          'Fetched wallet CLOB data (fast mode)'
+        );
+
+        return {
+          activity: null,
+          clobActivity,
+          positions: null,
+          queriedAt: new Date(),
+        };
+      }
+
+      // Full mode: query all subgraphs in parallel
       const [activity, clobActivity, positions] = await Promise.all([
         this.getUserActivity(normalizedAddress),
         this.getUserCLOBActivity(normalizedAddress),

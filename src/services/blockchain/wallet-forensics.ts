@@ -80,6 +80,15 @@ class WalletForensicsService {
   private readonly SUBGRAPH_CACHE_TTL_SECONDS =
     thresholds.subgraphCacheTTLHours * 3600;
 
+  // In-memory cache for recently analyzed wallets (faster than Redis)
+  // Key: address, Value: { fingerprint, timestamp }
+  private readonly recentWallets = new Map<
+    string,
+    { fingerprint: WalletFingerprint; timestamp: number }
+  >();
+  private readonly RECENT_WALLET_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly MAX_RECENT_WALLETS = 1000;
+
   private constructor() {
     logger.info('Wallet forensics service initialized (subgraph-only mode)');
   }
@@ -104,8 +113,18 @@ class WalletForensicsService {
   ): Promise<WalletFingerprint> {
     const normalizedAddress = address.toLowerCase().trim();
 
+    // Check in-memory cache first (fastest, avoids Redis and subgraph)
+    const recent = this.recentWallets.get(normalizedAddress);
+    if (recent && Date.now() - recent.timestamp < this.RECENT_WALLET_TTL_MS) {
+      logger.debug(
+        { address: normalizedAddress, cacheAge: Date.now() - recent.timestamp },
+        'Wallet fingerprint in-memory cache hit (skipping subgraph)'
+      );
+      return recent.fingerprint;
+    }
+
     // Use distributed lock to prevent concurrent analysis of same wallet
-    return await withLock(
+    const fingerprint = await withLock(
       `wallet-analysis:${normalizedAddress}`,
       async () => this.analyzeWalletInternal(normalizedAddress, tradeContext),
       {
@@ -114,6 +133,41 @@ class WalletForensicsService {
         retryDelay: 100,
       }
     );
+
+    // Update in-memory cache
+    this.updateRecentWallets(normalizedAddress, fingerprint);
+
+    return fingerprint;
+  }
+
+  /**
+   * Update in-memory cache with cleanup
+   */
+  private updateRecentWallets(
+    address: string,
+    fingerprint: WalletFingerprint
+  ): void {
+    // Cleanup old entries if over limit
+    if (this.recentWallets.size >= this.MAX_RECENT_WALLETS) {
+      const now = Date.now();
+      for (const [addr, data] of this.recentWallets) {
+        if (now - data.timestamp > this.RECENT_WALLET_TTL_MS) {
+          this.recentWallets.delete(addr);
+        }
+      }
+      // If still over limit, remove oldest half
+      if (this.recentWallets.size >= this.MAX_RECENT_WALLETS) {
+        const entries = Array.from(this.recentWallets.entries()).sort(
+          (a, b) => a[1].timestamp - b[1].timestamp
+        );
+        const toRemove = entries.slice(0, Math.floor(entries.length / 2));
+        for (const [addr] of toRemove) {
+          this.recentWallets.delete(addr);
+        }
+      }
+    }
+
+    this.recentWallets.set(address, { fingerprint, timestamp: Date.now() });
   }
 
   /**
