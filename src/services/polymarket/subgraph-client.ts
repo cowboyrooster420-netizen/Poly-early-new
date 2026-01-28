@@ -840,14 +840,16 @@ class PolymarketSubgraphClient {
   /**
    * Get recent trades from orderbook subgraph
    * Returns trades with both maker and taker addresses
+   * @param sinceTimestamp - Unix timestamp in seconds to fetch trades after
+   * @param limit - Maximum number of trades to fetch (default 1000)
    * @param assetIds - Optional filter for specific asset IDs (if not provided, fetches all)
    */
   public async getRecentTrades(
-    sinceMinutes: number = 5,
-    limit: number = 100,
+    sinceTimestamp: number,
+    limit: number = 1000,
     assetIds?: string[]
   ): Promise<SubgraphOrderFilled[]> {
-    const since = Math.floor(Date.now() / 1000) - sinceMinutes * 60;
+    const since = sinceTimestamp;
 
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
@@ -876,7 +878,7 @@ class PolymarketSubgraphClient {
         logger.info(
           {
             tradesFound: trades.length,
-            sinceMinutes,
+            sinceTimestamp,
             assetIdsCount: assetIds?.length || 0,
             oldestTimestamp:
               trades.length > 0

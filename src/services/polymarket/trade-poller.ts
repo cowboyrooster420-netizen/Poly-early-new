@@ -22,6 +22,8 @@ class TradePollingService {
   // Batch processing to avoid API rate limits during wallet analysis
   private readonly BATCH_SIZE = 10;
   private readonly BATCH_DELAY_MS = 2000; // 2 seconds between batches
+  // Track last processed trade timestamp to never miss trades
+  private lastProcessedTradeTimestamp: number | null = null;
 
   private constructor() {
     logger.info(
@@ -88,9 +90,19 @@ class TradePollingService {
         return;
       }
 
-      // Get trades from last 2 minutes (overlap to ensure we don't miss any)
-      // Only fetch trades for our monitored markets
-      const trades = await polymarketSubgraph.getRecentTrades(2, 500, assetIds);
+      // Determine the "since" timestamp
+      // On first poll: bootstrap from last 2 minutes
+      // On subsequent polls: use last processed timestamp to never miss trades
+      const sinceTimestamp = this.lastProcessedTradeTimestamp
+        ? this.lastProcessedTradeTimestamp
+        : Math.floor(Date.now() / 1000) - 120; // Bootstrap: last 2 minutes
+
+      // Fetch all trades since last processed timestamp
+      const trades = await polymarketSubgraph.getRecentTrades(
+        sinceTimestamp,
+        1000,
+        assetIds
+      );
 
       if (trades.length === 0) {
         logger.debug('No recent trades found in subgraph');
@@ -102,7 +114,8 @@ class TradePollingService {
         {
           tradeCount: trades.length,
           monitoredAssetCount: monitoredAssetIds.length,
-          sampleAssetIds: monitoredAssetIds.slice(0, 5),
+          sinceTimestamp,
+          isBootstrap: !this.lastProcessedTradeTimestamp,
         },
         'Processing trades from subgraph'
       );
@@ -198,6 +211,19 @@ class TradePollingService {
 
       if (newTradesCount > 0) {
         logger.info({ newTradesCount }, 'Processed new trades from subgraph');
+      }
+
+      // Update last processed timestamp to the newest trade's timestamp
+      // Trades are sorted descending, so first trade is newest
+      if (trades.length > 0 && trades[0]) {
+        const newestTimestamp = parseInt(trades[0].timestamp);
+        if (!isNaN(newestTimestamp)) {
+          this.lastProcessedTradeTimestamp = newestTimestamp;
+          logger.debug(
+            { lastProcessedTradeTimestamp: this.lastProcessedTradeTimestamp },
+            'Updated last processed trade timestamp'
+          );
+        }
       }
 
       this.lastPollTimestamp = Date.now();
