@@ -315,14 +315,51 @@ class TradePollingService {
       : usdcToUsd(subgraphTrade.makerAmountFilled);
 
     // Determine trade direction from taker's perspective
-    // If taker provides USDC, they are BUYING tokens
-    // If taker provides tokens, they are SELLING tokens
-    const side: 'buy' | 'sell' = takerProvidesUSDC ? 'buy' : 'sell';
+    // The subgraph shows maker/taker asset flows, but we need taker's actual trade
+    //
+    // IMPORTANT: In Polymarket atomic mints, when the subgraph shows taker "providing"
+    // outcome tokens, they didn't actually sell tokens - they BOUGHT the opposite token.
+    // Example: If subgraph shows taker "sold" YES tokens, they actually BOUGHT NO tokens.
+    //
+    // To correctly represent the taker's trade (and calculate correct USD value):
+    // - If taker provides USDC: they are BUYING the outcome token (straightforward)
+    // - If taker "provides" tokens: they are BUYING the OPPOSITE outcome token
+    //   (flip side to 'buy', flip outcome, use complementary price)
 
-    // The outcome asset is the non-USDC asset
     const outcomeAssetId = nonUSDCAsset;
-    const outcome: 'yes' | 'no' =
+    const subgraphOutcome: 'yes' | 'no' =
       market.clobTokenIdYes === outcomeAssetId ? 'yes' : 'no';
+
+    let side: 'buy' | 'sell';
+    let outcome: 'yes' | 'no';
+    let finalPrice: number;
+
+    if (takerProvidesUSDC) {
+      // Taker paid USDC to buy the outcome token - straightforward
+      side = 'buy';
+      outcome = subgraphOutcome;
+      finalPrice = usdcAmount / outcomeAmount;
+    } else {
+      // Taker "provided" tokens - this is atomic mint representation
+      // The taker actually BOUGHT the opposite outcome token
+      // Their cost is outcomeAmount × (1 - subgraphPrice)
+      side = 'buy';
+      outcome = subgraphOutcome === 'yes' ? 'no' : 'yes';
+      const subgraphPrice = usdcAmount / outcomeAmount;
+      finalPrice = 1 - subgraphPrice;
+
+      logger.debug(
+        {
+          subgraphOutcome,
+          flippedOutcome: outcome,
+          subgraphPrice: subgraphPrice.toFixed(4),
+          takerPrice: finalPrice.toFixed(4),
+          takerCost: (outcomeAmount * finalPrice).toFixed(2),
+          makerCost: usdcAmount.toFixed(2),
+        },
+        'Flipped atomic mint trade to show taker perspective'
+      );
+    }
 
     // Validate amounts
     if (outcomeAmount <= 0 || usdcAmount < 0) {
@@ -341,15 +378,12 @@ class TradePollingService {
       return null;
     }
 
-    // Price is USDC per outcome token
-    const price = usdcAmount / outcomeAmount;
-
-    // Sanity check: price should be between 0 and 1 (it's a probability)
-    if (price < 0 || price > 1) {
+    // Sanity check: finalPrice should be between 0 and 1 (it's a probability)
+    if (finalPrice < 0 || finalPrice > 1) {
       logger.error(
         {
           tradeId: subgraphTrade.id,
-          price,
+          finalPrice,
           usdcAmount,
           outcomeAmount,
           makerAssetId: makerAsset,
@@ -367,12 +401,15 @@ class TradePollingService {
     // Orderbook subgraph already provides actual user addresses (not proxy addresses)
     const takerAddress = subgraphTrade.taker;
 
+    // Calculate taker's actual USD cost for this trade
+    const takerUsdCost = outcomeAmount * finalPrice;
+
     const polyTrade: PolymarketTrade = {
       id: `subgraph-${subgraphTrade.id}`,
       marketId: market.id,
       side,
       size: outcomeAmount.toString(),
-      price: price.toFixed(4),
+      price: finalPrice.toFixed(4),
       timestamp: parseInt(subgraphTrade.timestamp) * 1000,
       maker: subgraphTrade.maker,
       taker: takerAddress,
@@ -393,14 +430,21 @@ class TradePollingService {
         // Asset type determination
         makerProvidesUSDC,
         takerProvidesUSDC,
-        // Derived values
+        // Subgraph vs Taker perspective (for atomic mint debugging)
+        subgraphOutcome: makerProvidesUSDC
+          ? market.clobTokenIdYes === nonUSDCAsset
+            ? 'yes'
+            : 'no'
+          : undefined,
+        wasFlipped: !takerProvidesUSDC,
+        // Final taker perspective values
         side,
         outcome,
         outcomeAmount: outcomeAmount.toFixed(2),
-        usdcAmount: usdcAmount.toFixed(2),
-        price: price.toFixed(4),
-        // Computed USD value for this trade
-        tradeUsdValue: usdcAmount.toFixed(2),
+        takerPrice: finalPrice.toFixed(4),
+        // Computed USD values
+        takerUsdCost: takerUsdCost.toFixed(2),
+        makerUsdAmount: usdcAmount.toFixed(2),
         // Market token IDs for reference
         yesTokenId: market.clobTokenIdYes,
         noTokenId: market.clobTokenIdNo,
