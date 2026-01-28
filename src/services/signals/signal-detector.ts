@@ -110,6 +110,29 @@ class SignalDetector {
       // Get thresholds for market-aware filtering
       const thresholds = getThresholds();
 
+      // FAST PRE-FILTER: Quick OI percentage check before expensive calculations
+      // This prevents subgraph calls for trades that don't meet minimum OI impact
+      const minOiPrefilterPct =
+        Number(process.env['MIN_OI_PREFILTER_PCT']) || 1.0;
+      const marketOI = parseFloat(marketData.openInterest);
+      if (marketOI > 0) {
+        const quickOiPct = (tradeUsdValue / marketOI) * 100;
+        if (quickOiPct < minOiPrefilterPct) {
+          logger.debug(
+            {
+              tradeId: trade.id,
+              tradeUsdValue: tradeUsdValue.toFixed(2),
+              marketOI: marketOI.toFixed(2),
+              oiPct: quickOiPct.toFixed(3),
+              threshold: minOiPrefilterPct,
+            },
+            `🚫 Trade filtered: ${quickOiPct.toFixed(2)}% OI < ${minOiPrefilterPct}% prefilter`
+          );
+          await this.incrementStat('filtered_oi_prefilter');
+          return null;
+        }
+      }
+
       // First, get liquidity data if using liquidity method
       let availableLiquidity: number | null = null;
       let liquidityData: LiquidityData | null = null;
