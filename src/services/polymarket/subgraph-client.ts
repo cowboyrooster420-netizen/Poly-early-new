@@ -443,8 +443,8 @@ class PolymarketSubgraphClient {
       headers: { 'Content-Type': 'application/json' },
     });
 
-    // Rate limit: 2 requests per second (balance between speed and avoiding 429s)
-    this.rateLimiter = new SubgraphRateLimiter(2);
+    // Rate limit: 3 requests per second (batch processing spreads out requests)
+    this.rateLimiter = new SubgraphRateLimiter(3);
 
     logger.info(
       'Polymarket subgraph client initialized with wallet mapping support'
