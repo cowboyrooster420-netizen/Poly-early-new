@@ -2,22 +2,12 @@ import {
   polymarketSubgraph,
   type SubgraphWalletData,
 } from '../polymarket/subgraph-client.js';
-import {
-  polymarketDataApi,
-  type DataApiUserData,
-} from '../polymarket/data-api-client.js';
 import { redis } from '../cache/redis.js';
 import { db, type PrismaClient } from '../database/prisma.js';
 import { logger } from '../../utils/logger.js';
 import { getThresholds } from '../../config/thresholds.js';
 import { normalizeVolume } from '../../utils/decimals.js';
 import { DecisionFramework } from '../data/decision-framework.js';
-import {
-  normalizeSubgraphData,
-  normalizeDataApiData,
-  validateDataConsistency,
-  mergeWalletData,
-} from '../data/data-normalizer.js';
 import { calculateConfidence } from './confidence-calculator.js';
 import type { FingerprintStatus, DataCompleteness } from '../../types/index.js';
 import { retryApiCall } from '../../utils/retry.js';
@@ -90,16 +80,8 @@ class WalletForensicsService {
   private readonly SUBGRAPH_CACHE_TTL_SECONDS =
     thresholds.subgraphCacheTTLHours * 3600;
 
-  // Skip subgraph cross-validation to reduce API load and speed up processing
-  // Set ENABLE_SUBGRAPH_CROSSVALIDATION=true to enable
-  private readonly ENABLE_SUBGRAPH_CROSSVALIDATION =
-    process.env['ENABLE_SUBGRAPH_CROSSVALIDATION'] === 'true';
-
   private constructor() {
-    logger.info(
-      { subgraphCrossValidation: this.ENABLE_SUBGRAPH_CROSSVALIDATION },
-      'Wallet forensics service initialized'
-    );
+    logger.info('Wallet forensics service initialized (subgraph-only mode)');
   }
 
   /**
@@ -171,7 +153,10 @@ class WalletForensicsService {
       });
     }
 
-    logger.info({ address: normalizedAddress }, 'Analyzing wallet via APIs');
+    logger.info(
+      { address: normalizedAddress },
+      'Analyzing wallet via subgraph'
+    );
 
     const dataCompleteness: DataCompleteness = {
       dataApi: false,
@@ -180,65 +165,11 @@ class WalletForensicsService {
       timestamp: Date.now(),
     };
 
-    let dataApiData: DataApiUserData | null = null;
     let subgraphData: SubgraphWalletData | null = null;
     const errors: string[] = [];
 
-    // Try Data API first with circuit breaker and retry
-    try {
-      dataApiData = await circuitBreakers.dataApi.execute(async () => {
-        return await retryApiCall(
-          () => polymarketDataApi.getUserData(normalizedAddress),
-          'dataApi.getUserData'
-        );
-      });
-
-      dataCompleteness.dataApi = true;
-
-      // Don't return early - we want to try both sources for cross-validation
-      if (dataApiData.activity || dataApiData.recentTrades.length > 0) {
-        logger.debug(
-          {
-            address: normalizedAddress,
-            hasActivity: !!dataApiData.activity,
-            tradeCount: dataApiData.recentTrades.length,
-          },
-          'Data API returned data - will attempt subgraph for cross-validation'
-        );
-      }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      errors.push(`Data API: ${errorMsg}`);
-      logger.warn(
-        {
-          error: errorMsg,
-          address: normalizedAddress,
-          isCircuitOpen: errorMsg.includes('Circuit breaker'),
-        },
-        'Data API failed, falling back to subgraph'
-      );
-    }
-
-    // Try Subgraph (either as fallback or for cross-validation)
-    // Skip if cross-validation is disabled AND we have Data API data
-    const shouldSkipSubgraph =
-      !this.ENABLE_SUBGRAPH_CROSSVALIDATION &&
-      dataApiData &&
-      (dataApiData.activity || dataApiData.recentTrades.length > 0);
-
-    if (shouldSkipSubgraph) {
-      logger.debug(
-        { address: normalizedAddress },
-        'Skipping subgraph (cross-validation disabled, Data API has data)'
-      );
-      return this.analyzeViaDataApi(
-        normalizedAddress,
-        dataApiData!,
-        tradeContext,
-        dataCompleteness
-      );
-    }
-
+    // Use subgraph directly for wallet fingerprinting
+    // Data API doesn't work with proxy wallet addresses
     try {
       subgraphData = await circuitBreakers.subgraph.execute(async () => {
         return await retryApiCall(
@@ -249,90 +180,21 @@ class WalletForensicsService {
 
       dataCompleteness.subgraph = true;
 
-      // Check if we have data from either source
+      // Check if we have data
       const hasSubgraphData =
         subgraphData.activity ||
         subgraphData.clobActivity ||
         subgraphData.positions;
-      const hasDataApiData =
-        dataApiData &&
-        (dataApiData.activity || dataApiData.recentTrades.length > 0);
 
-      if (!hasSubgraphData && !hasDataApiData) {
+      if (!hasSubgraphData) {
         logger.info(
           {
             address: normalizedAddress,
             responseTime: Date.now() - startTime,
           },
-          'No data found in either API - new user'
+          'No data found in subgraph - new user'
         );
         return this.createNewUserFingerprint(normalizedAddress, tradeContext);
-      }
-
-      // If we have both sources, cross-validate
-      if (hasSubgraphData && hasDataApiData) {
-        logger.info(
-          {
-            address: normalizedAddress,
-            responseTime: Date.now() - startTime,
-          },
-          'Both APIs returned data - performing cross-validation'
-        );
-
-        const subgraphNormalized = normalizeSubgraphData(
-          subgraphData,
-          normalizedAddress
-        );
-        const dataApiNormalized = normalizeDataApiData(
-          dataApiData!,
-          normalizedAddress
-        );
-
-        // Cross-validate data sources
-        const validation = validateDataConsistency(
-          subgraphNormalized,
-          dataApiNormalized
-        );
-
-        // Log any discrepancies
-        if (validation.warnings.length > 0 || !validation.isValid) {
-          logger.warn(
-            {
-              address: normalizedAddress,
-              validation,
-              subgraphMetrics: {
-                trades: subgraphNormalized.tradeCount,
-                volume: subgraphNormalized.volumeUSD,
-              },
-              dataApiMetrics: {
-                trades: dataApiNormalized.tradeCount,
-                volume: dataApiNormalized.volumeUSD,
-              },
-            },
-            'Data consistency issues between subgraph and Data API'
-          );
-        }
-
-        // Merge data for logging purposes
-        // Note: We could use mergedData for fingerprint creation in the future
-        mergeWalletData({
-          subgraph: subgraphNormalized,
-          dataApi: dataApiNormalized,
-        });
-
-        // Update data completeness with validation info
-        dataCompleteness.validationScore = validation.confidence;
-        dataCompleteness.hasDiscrepancies = validation.warnings.length > 0;
-      }
-
-      // If only Data API has data, use it
-      if (hasDataApiData && !hasSubgraphData) {
-        return this.analyzeViaDataApi(
-          normalizedAddress,
-          dataApiData!,
-          tradeContext,
-          dataCompleteness
-        );
       }
 
       // Calculate subgraph flags
@@ -439,19 +301,19 @@ class WalletForensicsService {
           responseTime: Date.now() - startTime,
           dataCompleteness,
         },
-        'Both APIs failed'
+        'Subgraph wallet analysis failed'
       );
     }
 
-    // Both APIs failed - return error fingerprint
+    // Subgraph failed - return error fingerprint
     return this.createErrorFingerprint(
       normalizedAddress,
       errors.join('; '),
       dataCompleteness,
-      subgraphData || dataApiData
+      subgraphData
         ? {
-            activity: subgraphData?.activity || null,
-            clobActivity: subgraphData?.clobActivity || null,
+            activity: subgraphData.activity || null,
+            clobActivity: subgraphData.clobActivity || null,
           }
         : undefined
     );
@@ -536,127 +398,6 @@ class WalletForensicsService {
       highConcentration,
       freshFatBet,
     };
-  }
-
-  /**
-   * Analyze wallet using Data API data
-   */
-  private async analyzeViaDataApi(
-    address: string,
-    data: DataApiUserData,
-    tradeContext?: { tradeSizeUSD: number; marketOI: number },
-    dataCompleteness?: DataCompleteness
-  ): Promise<WalletFingerprint> {
-    const activity = data.activity;
-    const metrics = polymarketDataApi.calculateWalletMetrics(data);
-
-    // Calculate flags based on Data API data
-    const flags: SubgraphFlags = {
-      lowTradeCount:
-        !activity || activity.totalTrades <= thresholds.subgraphLowTradeCount,
-      youngAccount: metrics.isNewTrader,
-      lowVolume:
-        !activity ||
-        normalizeVolume(activity.totalVolume, 'data-api') <=
-          thresholds.subgraphLowVolumeUSD,
-      highConcentration: metrics.isSpecialized,
-      freshFatBet: false, // Calculate below
-    };
-
-    // Check fresh fat bet pattern
-    if (tradeContext && activity) {
-      const isLargeTrade =
-        tradeContext.tradeSizeUSD >= thresholds.subgraphFreshFatBetSizeUSD;
-      const isSmallMarket =
-        tradeContext.marketOI <= thresholds.subgraphFreshFatBetMaxOI;
-      const isFreshAccount =
-        activity.totalTrades <= thresholds.subgraphFreshFatBetPriorTrades;
-
-      flags.freshFatBet = isLargeTrade && isSmallMarket && isFreshAccount;
-    }
-
-    // Calculate account age
-    let accountAgeDays: number | null = null;
-    if (activity?.firstTradeTimestamp) {
-      accountAgeDays = Math.floor(
-        (Date.now() - activity.firstTradeTimestamp) / (1000 * 60 * 60 * 24)
-      );
-    }
-
-    // Determine if suspicious - use both flag count and pattern score
-    const suspiciousFlagCount = Object.values(flags).filter(Boolean).length;
-    const isSuspicious =
-      suspiciousFlagCount >= 2 || metrics.tradingPatternScore >= 60;
-
-    // Calculate confidence based on Data API data quality
-    const confidence = calculateConfidence(
-      dataCompleteness || {
-        dataApi: true,
-        subgraph: false,
-        cache: false,
-        timestamp: Date.now(),
-      },
-      null, // No subgraph data in this path
-      data
-    );
-
-    const fingerprint: WalletFingerprint = {
-      address: address.toLowerCase(),
-      status: 'success' as FingerprintStatus,
-      isSuspicious,
-      dataCompleteness: dataCompleteness || {
-        dataApi: true,
-        subgraph: false,
-        cache: false,
-        timestamp: Date.now(),
-      },
-      confidenceLevel: confidence.level, // Calculated based on actual data quality
-      subgraphFlags: flags,
-      subgraphMetadata: {
-        polymarketTradeCount: activity?.totalTrades || 0,
-        polymarketVolumeUSD: normalizeVolume(activity?.totalVolume, 'data-api'),
-        polymarketAccountAgeDays: accountAgeDays,
-        maxPositionConcentration: 0, // Data API doesn't provide this directly
-        dataSource: 'data-api',
-      },
-      analyzedAt: new Date(),
-      // Backwards compatibility
-      flags: {
-        cexFunded: false,
-        lowTxCount: flags.lowTradeCount,
-        youngWallet: flags.youngAccount,
-        highPolymarketNetflow: true,
-        singlePurpose: flags.highConcentration,
-      },
-      metadata: {
-        totalTransactions: activity?.totalTrades || 0,
-        walletAgeDays: accountAgeDays ?? 0,
-        firstSeenTimestamp: activity?.firstTradeTimestamp || null,
-        cexFundingSource: null,
-        cexFundingTimestamp: null,
-        polymarketNetflowPercentage: 100,
-        uniqueProtocolsInteracted: 1,
-      },
-    };
-
-    // Cache and persist
-    await this.cacheFingerprint(address.toLowerCase(), fingerprint);
-    await this.persistFingerprint(fingerprint);
-
-    logger.info(
-      {
-        address: address.toLowerCase(),
-        isSuspicious,
-        flags,
-        patternScore: metrics.tradingPatternScore,
-        winRate: activity?.winRate || 0,
-        totalPnL: activity?.totalPnL || '0',
-        dataSource: 'data-api',
-      },
-      'Wallet analysis complete (Data API)'
-    );
-
-    return fingerprint;
   }
 
   /**
