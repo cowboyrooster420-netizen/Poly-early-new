@@ -253,8 +253,9 @@ class PolymarketDataApiClient {
   /**
    * Fetch recent trades for specific markets (condition IDs)
    * This is the main method for trade polling - replaces subgraph
+   * Batches requests to avoid URL length limits (HTTP 414)
    * @param conditionIds Array of condition IDs to filter by
-   * @param limit Maximum number of trades to fetch (max 10000)
+   * @param limit Maximum number of trades to fetch per batch
    * @param minUsdValue Optional minimum USD value filter (uses CASH filterType)
    * @returns Array of trades sorted by timestamp descending
    */
@@ -268,45 +269,84 @@ class PolymarketDataApiClient {
       return [];
     }
 
+    // Batch condition IDs to avoid URL length limits
+    // Each condition ID is ~66 chars, so 20 per batch keeps URL under 2KB
+    const BATCH_SIZE = 20;
+    const batches: string[][] = [];
+    for (let i = 0; i < conditionIds.length; i += BATCH_SIZE) {
+      batches.push(conditionIds.slice(i, i + BATCH_SIZE));
+    }
+
+    logger.info(
+      {
+        totalConditionIds: conditionIds.length,
+        batchCount: batches.length,
+        batchSize: BATCH_SIZE,
+      },
+      'Fetching trades from Data API in batches'
+    );
+
     try {
-      const params: Record<string, string | number | boolean> = {
-        limit,
-        takerOnly: true, // Only get real taker trades (not Exchange contract)
-        market: conditionIds.join(','),
-      };
+      // Fetch all batches in parallel
+      const batchPromises = batches.map(async (batchConditionIds) => {
+        const params: Record<string, string | number | boolean> = {
+          limit,
+          takerOnly: true, // Only get real taker trades (not Exchange contract)
+          market: batchConditionIds.join(','),
+        };
 
-      // Use CASH filter if minimum USD value specified
-      if (minUsdValue && minUsdValue > 0) {
-        params['filterType'] = 'CASH';
-        params['filterAmount'] = minUsdValue;
-      }
+        // Use CASH filter if minimum USD value specified
+        if (minUsdValue && minUsdValue > 0) {
+          params['filterType'] = 'CASH';
+          params['filterAmount'] = minUsdValue;
+        }
 
-      const response = await this.client.get<DataApiTrade[]>('/trades', {
-        params,
+        const response = await this.client.get<DataApiTrade[]>('/trades', {
+          params,
+        });
+
+        return response.data || [];
       });
 
-      const trades = response.data || [];
+      const batchResults = await Promise.all(batchPromises);
+
+      // Merge all results and deduplicate by transactionHash
+      const seenTxHashes = new Set<string>();
+      const allTrades: DataApiTrade[] = [];
+
+      for (const trades of batchResults) {
+        for (const trade of trades) {
+          if (!seenTxHashes.has(trade.transactionHash)) {
+            seenTxHashes.add(trade.transactionHash);
+            allTrades.push(trade);
+          }
+        }
+      }
+
+      // Sort by timestamp descending (newest first)
+      allTrades.sort((a, b) => b.timestamp - a.timestamp);
 
       logger.info(
         {
-          tradesFound: trades.length,
+          tradesFound: allTrades.length,
           conditionIdsCount: conditionIds.length,
+          batchCount: batches.length,
           minUsdValue: minUsdValue || 0,
           oldestTimestamp:
-            trades.length > 0
+            allTrades.length > 0
               ? new Date(
-                  trades[trades.length - 1]!.timestamp * 1000
+                  allTrades[allTrades.length - 1]!.timestamp * 1000
                 ).toISOString()
               : null,
           newestTimestamp:
-            trades.length > 0
-              ? new Date(trades[0]!.timestamp * 1000).toISOString()
+            allTrades.length > 0
+              ? new Date(allTrades[0]!.timestamp * 1000).toISOString()
               : null,
         },
         'Fetched trades from Data API'
       );
 
-      return trades;
+      return allTrades;
     } catch (error) {
       logger.error(
         {
