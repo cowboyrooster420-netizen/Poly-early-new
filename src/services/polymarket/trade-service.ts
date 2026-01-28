@@ -28,6 +28,7 @@ class TradeService {
   private tradeQueue: QueuedTrade[] = [];
   private deadLetterQueue: QueuedTrade[] = [];
   private isProcessing = false;
+  private processingPromise: Promise<void> | null = null;
   private readonly MAX_QUEUE_SIZE = 1000;
   private readonly MAX_RETRY_ATTEMPTS = 3;
   private readonly RETRY_DELAY_MS = 1000; // Initial delay, exponentially increases
@@ -78,9 +79,37 @@ class TradeService {
     });
 
     // Start processing if not already running
-    if (!this.isProcessing) {
-      void this.processQueue();
+    this.ensureProcessing();
+  }
+
+  /**
+   * Safely start the queue processor if not already running
+   * Catches and logs any errors from the processing loop
+   */
+  private ensureProcessing(): void {
+    if (this.isProcessing) {
+      return;
     }
+
+    this.processingPromise = this.processQueue().catch((error) => {
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          queueSize: this.tradeQueue.length,
+        },
+        '🚨 CRITICAL: Trade queue processor crashed unexpectedly'
+      );
+      // Reset state so processing can restart
+      this.isProcessing = false;
+      this.processingPromise = null;
+
+      // Try to restart if there are still items in the queue
+      if (this.tradeQueue.length > 0) {
+        logger.info('Attempting to restart queue processor after crash');
+        setTimeout(() => this.ensureProcessing(), 1000);
+      }
+    });
   }
 
   /**
@@ -90,29 +119,32 @@ class TradeService {
     if (this.isProcessing) return;
     this.isProcessing = true;
 
-    while (this.tradeQueue.length > 0) {
-      const queuedTrade = this.tradeQueue.shift();
-      if (queuedTrade) {
-        try {
-          await this.processTradeInternal(queuedTrade.trade);
+    try {
+      while (this.tradeQueue.length > 0) {
+        const queuedTrade = this.tradeQueue.shift();
+        if (queuedTrade) {
+          try {
+            await this.processTradeInternal(queuedTrade.trade);
 
-          // Log recovery if this was a retry
-          if (queuedTrade.attempts > 0) {
-            logger.info(
-              {
-                tradeId: queuedTrade.trade.id,
-                attempts: queuedTrade.attempts,
-              },
-              '✅ Trade processed successfully after retry'
-            );
+            // Log recovery if this was a retry
+            if (queuedTrade.attempts > 0) {
+              logger.info(
+                {
+                  tradeId: queuedTrade.trade.id,
+                  attempts: queuedTrade.attempts,
+                },
+                '✅ Trade processed successfully after retry'
+              );
+            }
+          } catch (error) {
+            await this.handleProcessingError(queuedTrade, error);
           }
-        } catch (error) {
-          await this.handleProcessingError(queuedTrade, error);
         }
       }
+    } finally {
+      this.isProcessing = false;
+      this.processingPromise = null;
     }
-
-    this.isProcessing = false;
   }
 
   /**
@@ -145,9 +177,7 @@ class TradeService {
       setTimeout(() => {
         if (this.tradeQueue.length < this.MAX_QUEUE_SIZE) {
           this.tradeQueue.push(queuedTrade);
-          if (!this.isProcessing) {
-            void this.processQueue();
-          }
+          this.ensureProcessing();
         } else {
           // Queue still full, move to dead letter queue
           this.moveToDeadLetterQueue(queuedTrade);
@@ -156,6 +186,15 @@ class TradeService {
     } else {
       // Max retries exceeded, move to dead letter queue
       this.moveToDeadLetterQueue(queuedTrade);
+    }
+  }
+
+  /**
+   * Wait for current processing to complete (useful for graceful shutdown)
+   */
+  public async waitForProcessing(): Promise<void> {
+    if (this.processingPromise) {
+      await this.processingPromise;
     }
   }
 
@@ -336,15 +375,61 @@ class TradeService {
           { tradeId: tradeWithMarketId.id, source: 'subgraph' },
           'Starting signal detection pipeline'
         );
-        await this.detectSignals(
-          tradeWithMarketId,
-          market.question,
-          market.slug
-        );
-        logger.debug(
-          { tradeId: tradeWithMarketId.id },
-          'Signal detection completed'
-        );
+
+        // Wrap signal detection in its own try-catch
+        // Trade is already stored, so we don't want signal detection failure
+        // to cause full retry (which would re-process the same trade)
+        try {
+          await this.detectSignals(
+            tradeWithMarketId,
+            market.question,
+            market.slug
+          );
+          logger.debug(
+            { tradeId: tradeWithMarketId.id },
+            'Signal detection completed'
+          );
+        } catch (signalError) {
+          // Log prominently but don't fail the trade processing
+          // The trade is stored, we just couldn't analyze it for signals
+          logger.error(
+            {
+              error:
+                signalError instanceof Error
+                  ? signalError.message
+                  : String(signalError),
+              stack:
+                signalError instanceof Error ? signalError.stack : undefined,
+              tradeId: tradeWithMarketId.id,
+              marketId: tradeWithMarketId.marketId,
+              taker: tradeWithMarketId.taker.substring(0, 10) + '...',
+              size: tradeWithMarketId.size,
+              price: tradeWithMarketId.price,
+            },
+            '🚨 Signal detection failed - trade stored but alert may be missed'
+          );
+
+          // Track failed signal detections in Redis for monitoring
+          try {
+            const redisClient = redis.getClient();
+            await redisClient.lpush(
+              'failed_signal_detections',
+              JSON.stringify({
+                tradeId: tradeWithMarketId.id,
+                marketId: tradeWithMarketId.marketId,
+                error:
+                  signalError instanceof Error
+                    ? signalError.message
+                    : String(signalError),
+                timestamp: Date.now(),
+              })
+            );
+            // Keep only last 100 failures
+            await redisClient.ltrim('failed_signal_detections', 0, 99);
+          } catch {
+            // Ignore Redis errors for tracking
+          }
+        }
       } else {
         logger.debug(
           {

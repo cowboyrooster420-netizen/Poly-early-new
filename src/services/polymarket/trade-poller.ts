@@ -14,11 +14,13 @@ class TradePollingService {
   private isRunning = false;
   private pollInterval: NodeJS.Timeout | null = null;
   private lastPollTimestamp: number = Date.now();
-  private processedTradeIds = new Set<string>();
+  // Map of trade ID -> timestamp when processed (for proper time-based cleanup)
+  private processedTradeIds = new Map<string, number>();
   // Poll interval configurable via env var (default 60 seconds to reduce Goldsky load)
   private readonly POLL_INTERVAL_MS =
     Number(process.env['TRADE_POLL_INTERVAL_MS']) || 60000;
   private readonly MAX_PROCESSED_IDS = 10000; // Prevent memory leak
+  private readonly PROCESSED_ID_TTL_MS = 30 * 60 * 1000; // 30 minutes TTL for processed IDs
   // Batch processing to avoid API rate limits during wallet analysis
   private readonly BATCH_SIZE = 10;
   private readonly BATCH_DELAY_MS = 2000; // 2 seconds between batches
@@ -61,13 +63,31 @@ class TradePollingService {
 
     setTimeout(() => {
       // Do initial poll after delay
-      void this.pollTrades();
+      this.safePollTrades();
 
       // Set up interval
       this.pollInterval = setInterval(() => {
-        void this.pollTrades();
+        this.safePollTrades();
       }, this.POLL_INTERVAL_MS);
     }, STARTUP_DELAY_MS);
+  }
+
+  /**
+   * Safely execute pollTrades with error handling
+   * Prevents unhandled promise rejections from crashing the service
+   */
+  private safePollTrades(): void {
+    this.pollTrades().catch((error) => {
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          lastPollTimestamp: this.lastPollTimestamp,
+          processedTradeCount: this.processedTradeIds.size,
+        },
+        '🚨 Trade polling failed unexpectedly - will retry on next interval'
+      );
+    });
   }
 
   /**
@@ -174,8 +194,8 @@ class TradePollingService {
               );
             }
 
-            // Mark as processed
-            this.processedTradeIds.add(trade.id);
+            // Mark as processed with current timestamp
+            this.processedTradeIds.set(trade.id, Date.now());
           } catch (tradeError) {
             logger.error(
               {
@@ -193,18 +213,6 @@ class TradePollingService {
             // Continue processing other trades even if one fails
             continue;
           }
-
-          // Clean up old IDs to prevent memory leak
-          if (this.processedTradeIds.size > this.MAX_PROCESSED_IDS) {
-            const idsArray = Array.from(this.processedTradeIds);
-            const toRemove = idsArray.slice(
-              0,
-              idsArray.length - this.MAX_PROCESSED_IDS / 2
-            );
-            for (const id of toRemove) {
-              this.processedTradeIds.delete(id);
-            }
-          }
         }
 
         // Wait between batches to let rate limiter recover (skip delay after last batch)
@@ -217,6 +225,9 @@ class TradePollingService {
             setTimeout(resolve, this.BATCH_DELAY_MS)
           );
         }
+
+        // Clean up old IDs to prevent memory leak (time-based + size-based)
+        this.cleanupProcessedIds();
       }
 
       if (newTradesCount > 0) {
@@ -244,6 +255,59 @@ class TradePollingService {
           stack: error instanceof Error ? error.stack : undefined,
         },
         'Failed to poll trades from subgraph - top level error'
+      );
+    }
+  }
+
+  /**
+   * Clean up old processed trade IDs to prevent memory leak
+   * Uses both time-based (TTL) and size-based cleanup for robustness
+   */
+  private cleanupProcessedIds(): void {
+    const now = Date.now();
+    const sizeBefore = this.processedTradeIds.size;
+    let expiredCount = 0;
+
+    // First pass: remove expired entries (older than TTL)
+    for (const [id, timestamp] of this.processedTradeIds) {
+      if (now - timestamp > this.PROCESSED_ID_TTL_MS) {
+        this.processedTradeIds.delete(id);
+        expiredCount++;
+      }
+    }
+
+    // Second pass: if still over limit, remove oldest entries
+    if (this.processedTradeIds.size > this.MAX_PROCESSED_IDS) {
+      // Convert to array sorted by timestamp (oldest first)
+      const entries = Array.from(this.processedTradeIds.entries()).sort(
+        (a, b) => a[1] - b[1]
+      );
+
+      // Remove oldest entries until we're at half capacity
+      const targetSize = Math.floor(this.MAX_PROCESSED_IDS / 2);
+      const toRemove = entries.slice(0, entries.length - targetSize);
+
+      for (const [id] of toRemove) {
+        this.processedTradeIds.delete(id);
+      }
+
+      logger.info(
+        {
+          sizeBefore,
+          sizeAfter: this.processedTradeIds.size,
+          expiredRemoved: expiredCount,
+          overflowRemoved: toRemove.length,
+        },
+        'Cleaned up processed trade IDs (size overflow)'
+      );
+    } else if (expiredCount > 0) {
+      logger.debug(
+        {
+          sizeBefore,
+          sizeAfter: this.processedTradeIds.size,
+          expiredRemoved: expiredCount,
+        },
+        'Cleaned up expired processed trade IDs'
       );
     }
   }
@@ -314,6 +378,23 @@ class TradePollingService {
       ? usdcToUsd(subgraphTrade.takerAmountFilled)
       : usdcToUsd(subgraphTrade.makerAmountFilled);
 
+    // Validate amounts BEFORE division to prevent NaN/Infinity
+    if (outcomeAmount <= 0 || usdcAmount < 0) {
+      logger.warn(
+        {
+          tradeId: subgraphTrade.id,
+          outcomeAmount,
+          usdcAmount,
+          makerAmountFilled: subgraphTrade.makerAmountFilled,
+          takerAmountFilled: subgraphTrade.takerAmountFilled,
+          makerProvidesUSDC,
+          takerProvidesUSDC,
+        },
+        'Invalid trade amounts detected - skipping to prevent division by zero'
+      );
+      return null;
+    }
+
     // Determine trade direction from taker's perspective
     // The subgraph shows maker/taker asset flows, but we need taker's actual trade
     //
@@ -359,23 +440,6 @@ class TradePollingService {
         },
         'Flipped atomic mint trade to show taker perspective'
       );
-    }
-
-    // Validate amounts
-    if (outcomeAmount <= 0 || usdcAmount < 0) {
-      logger.warn(
-        {
-          tradeId: subgraphTrade.id,
-          outcomeAmount,
-          usdcAmount,
-          makerAmountFilled: subgraphTrade.makerAmountFilled,
-          takerAmountFilled: subgraphTrade.takerAmountFilled,
-          makerProvidesUSDC,
-          takerProvidesUSDC,
-        },
-        'Invalid trade amounts detected'
-      );
-      return null;
     }
 
     // Sanity check: finalPrice should be between 0 and 1 (it's a probability)
