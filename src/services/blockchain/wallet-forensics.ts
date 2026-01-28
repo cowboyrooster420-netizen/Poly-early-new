@@ -90,8 +90,16 @@ class WalletForensicsService {
   private readonly SUBGRAPH_CACHE_TTL_SECONDS =
     thresholds.subgraphCacheTTLHours * 3600;
 
+  // Skip subgraph cross-validation to reduce API load and speed up processing
+  // Set ENABLE_SUBGRAPH_CROSSVALIDATION=true to enable
+  private readonly ENABLE_SUBGRAPH_CROSSVALIDATION =
+    process.env['ENABLE_SUBGRAPH_CROSSVALIDATION'] === 'true';
+
   private constructor() {
-    logger.info('Wallet forensics service initialized (subgraph-only mode)');
+    logger.info(
+      { subgraphCrossValidation: this.ENABLE_SUBGRAPH_CROSSVALIDATION },
+      'Wallet forensics service initialized'
+    );
   }
 
   /**
@@ -212,6 +220,25 @@ class WalletForensicsService {
     }
 
     // Try Subgraph (either as fallback or for cross-validation)
+    // Skip if cross-validation is disabled AND we have Data API data
+    const shouldSkipSubgraph =
+      !this.ENABLE_SUBGRAPH_CROSSVALIDATION &&
+      dataApiData &&
+      (dataApiData.activity || dataApiData.recentTrades.length > 0);
+
+    if (shouldSkipSubgraph) {
+      logger.debug(
+        { address: normalizedAddress },
+        'Skipping subgraph (cross-validation disabled, Data API has data)'
+      );
+      return this.analyzeViaDataApi(
+        normalizedAddress,
+        dataApiData!,
+        tradeContext,
+        dataCompleteness
+      );
+    }
+
     try {
       subgraphData = await circuitBreakers.subgraph.execute(async () => {
         return await retryApiCall(
