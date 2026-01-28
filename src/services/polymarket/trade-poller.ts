@@ -21,6 +21,10 @@ class TradePollingService {
     Number(process.env['TRADE_POLL_INTERVAL_MS']) || 60000;
   private readonly MAX_PROCESSED_IDS = 10000; // Prevent memory leak
   private readonly PROCESSED_ID_TTL_MS = 30 * 60 * 1000; // 30 minutes TTL for processed IDs
+  // Pre-queue filter: skip trades below this USD value to reduce queue pressure
+  // Set to 0 to disable pre-filtering
+  private readonly MIN_TRADE_USD_PREFILTER =
+    Number(process.env['MIN_TRADE_USD_PREFILTER']) || 100;
   // Batch processing to avoid API rate limits during wallet analysis
   private readonly BATCH_SIZE = 10;
   private readonly BATCH_DELAY_MS = 2000; // 2 seconds between batches
@@ -29,8 +33,11 @@ class TradePollingService {
 
   private constructor() {
     logger.info(
-      { pollIntervalMs: this.POLL_INTERVAL_MS },
-      `Trade polling service initialized (interval: ${this.POLL_INTERVAL_MS / 1000}s)`
+      {
+        pollIntervalMs: this.POLL_INTERVAL_MS,
+        minTradeUsdPrefilter: this.MIN_TRADE_USD_PREFILTER,
+      },
+      `Trade polling service initialized (interval: ${this.POLL_INTERVAL_MS / 1000}s, min trade: $${this.MIN_TRADE_USD_PREFILTER})`
     );
   }
 
@@ -177,11 +184,33 @@ class TradePollingService {
             // Convert subgraph trade to our format
             const polyTrade = await this.convertToPolymarketTrade(trade);
             if (polyTrade) {
+              // Pre-queue filter: skip small trades to reduce queue pressure
+              const tradeUsdValue =
+                parseFloat(polyTrade.size) * parseFloat(polyTrade.price);
+
+              if (
+                this.MIN_TRADE_USD_PREFILTER > 0 &&
+                tradeUsdValue < this.MIN_TRADE_USD_PREFILTER
+              ) {
+                logger.debug(
+                  {
+                    tradeId: polyTrade.id,
+                    tradeUsdValue: tradeUsdValue.toFixed(2),
+                    threshold: this.MIN_TRADE_USD_PREFILTER,
+                  },
+                  '⏭️ Skipping small trade (pre-queue filter)'
+                );
+                // Still mark as processed to avoid re-fetching
+                this.processedTradeIds.set(trade.id, Date.now());
+                continue;
+              }
+
               logger.info(
                 {
                   tradeId: polyTrade.id,
                   marketId: polyTrade.marketId,
                   size: polyTrade.size,
+                  tradeUsdValue: tradeUsdValue.toFixed(2),
                   taker: polyTrade.taker.substring(0, 10) + '...',
                 },
                 '📤 Sending trade to trade service'
