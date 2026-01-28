@@ -51,13 +51,23 @@ class TradePollingService {
     this.isRunning = true;
     logger.info('Starting trade polling service');
 
-    // Do initial poll
-    void this.pollTrades();
+    // Delay initial poll by 30 seconds to let other services initialize
+    // and avoid rate limiting on startup
+    const STARTUP_DELAY_MS = 30000;
+    logger.info(
+      { startupDelayMs: STARTUP_DELAY_MS },
+      'Delaying initial trade poll to avoid startup rate limits'
+    );
 
-    // Set up interval
-    this.pollInterval = setInterval(() => {
+    setTimeout(() => {
+      // Do initial poll after delay
       void this.pollTrades();
-    }, this.POLL_INTERVAL_MS);
+
+      // Set up interval
+      this.pollInterval = setInterval(() => {
+        void this.pollTrades();
+      }, this.POLL_INTERVAL_MS);
+    }, STARTUP_DELAY_MS);
   }
 
   /**
