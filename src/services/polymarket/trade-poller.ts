@@ -30,9 +30,9 @@ class TradePollingService {
   private readonly BATCH_DELAY_MS = 2000; // 2 seconds between batches
   // Track last processed trade timestamp to never miss trades
   private lastProcessedTradeTimestamp: number | null = null;
-  // Max age for trades on startup - ignore trades older than this to avoid alerting on old trades
+  // Max age for trades - ignore trades older than this to avoid alerting on old trades
   private readonly MAX_TRADE_AGE_MINUTES =
-    Number(process.env['MAX_TRADE_AGE_MINUTES']) || 10;
+    Number(process.env['MAX_TRADE_AGE_MINUTES']) || 720; // 12 hours
   // Track if this is the first poll (for startup filtering)
   private isFirstPoll = true;
 
