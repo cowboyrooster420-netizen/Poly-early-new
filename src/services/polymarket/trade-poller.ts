@@ -30,14 +30,20 @@ class TradePollingService {
   private readonly BATCH_DELAY_MS = 2000; // 2 seconds between batches
   // Track last processed trade timestamp to never miss trades
   private lastProcessedTradeTimestamp: number | null = null;
+  // Max age for trades on startup - ignore trades older than this to avoid alerting on old trades
+  private readonly MAX_TRADE_AGE_MINUTES =
+    Number(process.env['MAX_TRADE_AGE_MINUTES']) || 10;
+  // Track if this is the first poll (for startup filtering)
+  private isFirstPoll = true;
 
   private constructor() {
     logger.info(
       {
         pollIntervalMs: this.POLL_INTERVAL_MS,
         minTradeUsdPrefilter: this.MIN_TRADE_USD_PREFILTER,
+        maxTradeAgeMinutes: this.MAX_TRADE_AGE_MINUTES,
       },
-      `Trade polling service initialized (interval: ${this.POLL_INTERVAL_MS / 1000}s, min trade: $${this.MIN_TRADE_USD_PREFILTER})`
+      `Trade polling service initialized (interval: ${this.POLL_INTERVAL_MS / 1000}s, min trade: $${this.MIN_TRADE_USD_PREFILTER}, max age: ${this.MAX_TRADE_AGE_MINUTES}m)`
     );
   }
 
@@ -183,6 +189,26 @@ class TradePollingService {
               continue;
             }
 
+            // On first poll, skip trades older than MAX_TRADE_AGE_MINUTES
+            // This prevents alerting on old trades when the bot restarts
+            if (this.isFirstPoll) {
+              const tradeAgeMs = Date.now() - trade.timestamp * 1000;
+              const maxAgeMs = this.MAX_TRADE_AGE_MINUTES * 60 * 1000;
+              if (tradeAgeMs > maxAgeMs) {
+                logger.debug(
+                  {
+                    tradeKey,
+                    tradeAgeMinutes: Math.round(tradeAgeMs / 60000),
+                    maxAgeMinutes: this.MAX_TRADE_AGE_MINUTES,
+                  },
+                  '⏭️ Skipping old trade on startup'
+                );
+                // Mark as processed so we don't see it again
+                this.processedTradeIds.set(tradeKey, Date.now());
+                continue;
+              }
+            }
+
             // Convert Data API trade to our format
             const polyTrade = this.convertDataApiTrade(trade);
             if (polyTrade) {
@@ -263,6 +289,15 @@ class TradePollingService {
       }
 
       this.lastPollTimestamp = Date.now();
+
+      // After first poll, disable startup filtering
+      if (this.isFirstPoll) {
+        logger.info(
+          { maxTradeAgeMinutes: this.MAX_TRADE_AGE_MINUTES },
+          '✅ First poll complete - startup filtering disabled for subsequent polls'
+        );
+        this.isFirstPoll = false;
+      }
     } catch (error) {
       logger.error(
         {
