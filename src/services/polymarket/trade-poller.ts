@@ -138,11 +138,11 @@ class TradePollingService {
       // The Data API returns most recent trades, sorted by timestamp desc
       // Note: Data API doesn't support "since" timestamp filter, so we fetch
       // recent trades and filter by our tracked IDs to avoid duplicates
-      // Limit per batch - we poll every 60s and only care about trades < 10 min old
-      // With 25 batches, 50 per batch = up to 1250 trades total (vs 25,000 before)
+      // Limit per batch - balance between catching recent trades and not fetching too much
+      // With 25 batches, 200 per batch = up to 5000 trades total
       const trades = await polymarketDataApi.getRecentTradesForMarkets(
         conditionIds,
-        50, // Fetch up to 50 trades per batch of 20 markets
+        200, // Fetch up to 200 trades per batch of 20 markets
         this.MIN_TRADE_USD_PREFILTER > 0
           ? this.MIN_TRADE_USD_PREFILTER
           : undefined
