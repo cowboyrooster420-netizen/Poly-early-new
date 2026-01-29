@@ -189,24 +189,29 @@ class TradePollingService {
               continue;
             }
 
-            // On first poll, skip trades older than MAX_TRADE_AGE_MINUTES
-            // This prevents alerting on old trades when the bot restarts
-            if (this.isFirstPoll) {
-              const tradeAgeMs = Date.now() - trade.timestamp * 1000;
-              const maxAgeMs = this.MAX_TRADE_AGE_MINUTES * 60 * 1000;
-              if (tradeAgeMs > maxAgeMs) {
-                logger.debug(
-                  {
-                    tradeKey,
-                    tradeAgeMinutes: Math.round(tradeAgeMs / 60000),
-                    maxAgeMinutes: this.MAX_TRADE_AGE_MINUTES,
-                  },
-                  '⏭️ Skipping old trade on startup'
-                );
-                // Mark as processed so we don't see it again
-                this.processedTradeIds.set(tradeKey, Date.now());
-                continue;
-              }
+            // Skip trades older than MAX_TRADE_AGE_MINUTES
+            // This prevents alerting on old trades (especially on startup)
+            // Timestamp could be in seconds or milliseconds - detect based on magnitude
+            const timestampMs =
+              trade.timestamp > 1e12 ? trade.timestamp : trade.timestamp * 1000;
+            const tradeAgeMs = Date.now() - timestampMs;
+            const maxAgeMs = this.MAX_TRADE_AGE_MINUTES * 60 * 1000;
+
+            if (tradeAgeMs > maxAgeMs) {
+              logger.info(
+                {
+                  tradeKey,
+                  tradeTimestamp: trade.timestamp,
+                  timestampMs,
+                  tradeAgeMinutes: Math.round(tradeAgeMs / 60000),
+                  maxAgeMinutes: this.MAX_TRADE_AGE_MINUTES,
+                  tradeDate: new Date(timestampMs).toISOString(),
+                },
+                '⏭️ Skipping old trade (older than max age)'
+              );
+              // Mark as processed so we don't see it again
+              this.processedTradeIds.set(tradeKey, Date.now());
+              continue;
             }
 
             // Convert Data API trade to our format
