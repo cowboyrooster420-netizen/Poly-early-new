@@ -265,6 +265,8 @@ class TelegramCommandHandler {
       await this.handleTestWallet(chatId, wallet);
     } else if (text === '/stats') {
       await this.handleStats(chatId);
+    } else if (text === '/reload') {
+      await this.handleReload(chatId);
     }
   }
 
@@ -677,6 +679,30 @@ class TelegramCommandHandler {
   }
 
   /**
+   * Handle /reload command - reload markets from database
+   */
+  private async handleReload(chatId: number): Promise<void> {
+    try {
+      await this.sendMessage(chatId, '⏳ Reloading markets from database...');
+
+      await marketService.reloadMarkets();
+      const stats = marketService.getStats();
+
+      await this.sendMessage(
+        chatId,
+        `✅ Markets reloaded!\n\n` +
+          `• Tier 1: ${stats.tier1}\n` +
+          `• Tier 2: ${stats.tier2}\n` +
+          `• Tier 3: ${stats.tier3}\n` +
+          `• *Total: ${stats.total}*`
+      );
+    } catch (error) {
+      logger.error({ error }, 'Failed to reload markets');
+      await this.sendMessage(chatId, '❌ Failed to reload markets');
+    }
+  }
+
+  /**
    * Handle /help command
    */
   private async handleHelp(chatId: number): Promise<void> {
@@ -686,6 +712,7 @@ class TelegramCommandHandler {
       `• \`/add <slug>\` - Add a market by URL slug\n` +
       `• \`/markets\` - List monitored markets\n` +
       `• \`/remove <slug>\` - Remove a market\n` +
+      `• \`/reload\` - Reload markets from database\n` +
       `• \`/status\` - Show bot status\n` +
       `• \`/test <wallet>\` - Test wallet fingerprint\n` +
       `• \`/stats\` - Show filter funnel stats\n` +
