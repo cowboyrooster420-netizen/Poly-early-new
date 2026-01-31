@@ -527,9 +527,9 @@ class PolymarketSubgraphClient {
       headers: { 'Content-Type': 'application/json' },
     });
 
-    // Rate limit: 1.5 requests per second (conservative to avoid Goldsky 429s)
-    // Adaptive backoff will further reduce if we hit rate limits
-    this.rateLimiter = new SubgraphRateLimiter(1.5);
+    // Rate limit: 0.5 requests per second (very conservative for Goldsky)
+    // Goldsky has strict rate limits - adaptive backoff will reduce further if needed
+    this.rateLimiter = new SubgraphRateLimiter(0.5);
 
     logger.info(
       'Polymarket subgraph client initialized with wallet mapping support'
@@ -756,17 +756,22 @@ class PolymarketSubgraphClient {
 
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
-        // Query both maker and taker trades in parallel
-        const [makerResponse, takerResponse] = await Promise.all([
-          this.orderbookClient.post<OrderbookQueryResponse>('', {
+        // Query maker and taker trades SEQUENTIALLY to reduce rate limit pressure
+        // (Previously parallel, but Goldsky rate limits are strict)
+        const makerResponse =
+          await this.orderbookClient.post<OrderbookQueryResponse>('', {
             query: USER_CLOB_TRADES_MAKER_QUERY,
             variables: { address: normalizedAddress },
-          }),
-          this.orderbookClient.post<OrderbookQueryResponse>('', {
+          });
+
+        // Small delay between queries to avoid burst
+        await this.sleep(500);
+
+        const takerResponse =
+          await this.orderbookClient.post<OrderbookQueryResponse>('', {
             query: USER_CLOB_TRADES_TAKER_QUERY,
             variables: { address: normalizedAddress },
-          }),
-        ]);
+          });
 
         // Check for errors
         if (makerResponse.data.errors && makerResponse.data.errors.length > 0) {
