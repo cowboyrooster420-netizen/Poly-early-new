@@ -1,6 +1,7 @@
 import axios, { type AxiosInstance, AxiosError } from 'axios';
 import { logger } from '../../utils/logger.js';
 import { usdcToUsd } from '../../utils/decimals.js';
+import { db } from '../database/prisma.js';
 
 /**
  * Polymarket Subgraph Endpoints (Goldsky-hosted)
@@ -881,12 +882,41 @@ class PolymarketSubgraphClient {
   /**
    * Resolve proxy wallet address to actual signer (user) address
    * This is critical for proper user identification since WebSocket gives us proxy addresses
+   *
+   * OPTIMIZATION: Checks database first since proxy→signer mappings are permanent.
+   * Only queries subgraph for wallets we haven't seen before.
    */
   public async getSignerFromProxy(
     proxyAddress: string
   ): Promise<string | null> {
     const normalizedAddress = proxyAddress.toLowerCase();
 
+    // Check database first - proxy→signer mappings are permanent
+    try {
+      const prisma = db.getClient();
+      const cached = await prisma.proxyWallet.findUnique({
+        where: { proxyAddress: normalizedAddress },
+      });
+
+      if (cached) {
+        logger.debug(
+          {
+            proxy: normalizedAddress,
+            signer: cached.signerAddress.substring(0, 10) + '...',
+          },
+          'Proxy→signer resolved from database (no subgraph call)'
+        );
+        return cached.signerAddress;
+      }
+    } catch (dbError) {
+      // Database error - fall through to subgraph
+      logger.warn(
+        { error: dbError instanceof Error ? dbError.message : String(dbError) },
+        'Failed to check proxy cache in database, falling back to subgraph'
+      );
+    }
+
+    // Not in database - query subgraph
     return this.rateLimiter.execute(async () => {
       return this.retryRequest(async () => {
         const response = await this.walletClient.post<WalletQueryResponse>('', {
@@ -919,12 +949,45 @@ class PolymarketSubgraphClient {
             signer: wallet.signer,
             type: wallet.type,
           },
-          'Resolved proxy wallet to signer'
+          'Resolved proxy wallet to signer via subgraph'
+        );
+
+        // Store in database for future lookups (fire and forget)
+        this.cacheProxyMapping(normalizedAddress, wallet.signer).catch(
+          (err) => {
+            logger.warn(
+              { error: err instanceof Error ? err.message : String(err) },
+              'Failed to cache proxy→signer mapping'
+            );
+          }
         );
 
         return wallet.signer;
       });
     });
+  }
+
+  /**
+   * Cache a proxy→signer mapping in the database
+   * This is permanent - the mapping never changes
+   */
+  private async cacheProxyMapping(
+    proxyAddress: string,
+    signerAddress: string
+  ): Promise<void> {
+    const prisma = db.getClient();
+    await prisma.proxyWallet.upsert({
+      where: { proxyAddress },
+      create: { proxyAddress, signerAddress },
+      update: {}, // No-op if already exists
+    });
+    logger.debug(
+      {
+        proxy: proxyAddress.substring(0, 10) + '...',
+        signer: signerAddress.substring(0, 10) + '...',
+      },
+      'Cached proxy→signer mapping in database'
+    );
   }
 
   /**

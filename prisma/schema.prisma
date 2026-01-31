@@ -246,6 +246,22 @@ model Alert {
 }
 
 // ============================================================================
+// ProxyWallet - Polymarket proxy wallet → signer (EOA) mappings
+// These are permanent - once created, the mapping never changes
+// ============================================================================
+
+model ProxyWallet {
+  proxyAddress   String   @id
+  signerAddress  String
+
+  // When we discovered this mapping
+  createdAt      DateTime @default(now())
+
+  @@index([signerAddress])
+  @@map("proxy_wallets")
+}
+
+// ============================================================================
 // CEX Wallets - Known CEX hot wallet addresses for funding detection
 // ============================================================================
 
