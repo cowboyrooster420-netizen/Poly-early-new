@@ -252,77 +252,8 @@ class TradeService {
       const outcome: 'yes' | 'no' =
         market.clobTokenIdYes === assetId ? 'yes' : 'no';
 
-      // Resolve taker address - WebSocket gives us proxy addresses, we need actual user addresses
-      let taker = trade.taker;
-      if (taker) {
-        try {
-          // Resolve proxy wallet to actual signer (user) address
-          const signerAddress =
-            await polymarketSubgraph.getSignerFromProxy(taker);
-          if (signerAddress) {
-            logger.debug(
-              {
-                proxy: taker.substring(0, 10) + '...',
-                signer: signerAddress.substring(0, 10) + '...',
-              },
-              'Resolved proxy wallet to signer address'
-            );
-            taker = signerAddress;
-          } else {
-            // If no mapping found, this might be a direct EOA trade (rare)
-            logger.debug(
-              { proxyAddress: taker },
-              'No signer mapping found for address - using as-is'
-            );
-          }
-        } catch (error) {
-          // Use decision framework for explicit error handling
-          const decision = DecisionFramework.handleProxyResolutionError(error, {
-            proxyAddress: taker,
-            tradeId: trade.id,
-            marketId: market.id,
-          });
-
-          await DecisionFramework.executeDecision(decision, {
-            onSkip: () => {
-              // Skip this trade entirely
-              return;
-            },
-            onProceed: () => {
-              // Continue with original address
-              // taker remains unchanged
-            },
-          });
-
-          // If decision was to skip, return early
-          if (decision.action === 'skip') {
-            return;
-          }
-
-          // Alert on high failure rate
-          if (
-            decision.severity === 'error' ||
-            decision.severity === 'critical'
-          ) {
-            const recentFailures = await redis.increment(
-              `proxy:failures:${(Date.now() / 60000) | 0}`
-            );
-            if (recentFailures === 1) {
-              await redis.expire(
-                `proxy:failures:${(Date.now() / 60000) | 0}`,
-                300
-              ); // 5 min TTL
-            }
-
-            if (recentFailures > 10) {
-              logger.error(
-                { recentFailures, minuteWindow: (Date.now() / 60000) | 0 },
-                '🚨 HIGH PROXY RESOLUTION FAILURE RATE - CHECK WALLET SUBGRAPH HEALTH'
-              );
-            }
-          }
-        }
-      } else {
+      // Check taker address exists (don't resolve proxy yet - wait until signal detection passes)
+      if (!trade.taker) {
         logger.warn(
           { tradeId: trade.id },
           'Trade missing taker address - skipping'
@@ -331,11 +262,13 @@ class TradeService {
       }
 
       // Create a trade object with the correct market ID for database storage
+      // NOTE: taker is still the proxy address at this point - we resolve it later
+      // only if the trade passes signal detection thresholds
       const tradeWithMarketId: PolymarketTrade = {
         ...trade,
         marketId: market.id, // Use actual market ID from database
         outcome,
-        taker, // Use looked-up taker if original was empty
+        taker: trade.taker, // Keep proxy address for now
       };
 
       // Log trade details
@@ -550,17 +483,62 @@ class TradeService {
         {
           tradeId: trade.id,
           marketId: trade.marketId,
-          wallet: trade.taker.substring(0, 10) + '...',
+          proxyWallet: trade.taker.substring(0, 10) + '...',
           tradeUsdValue: signal.tradeUsdValue.toFixed(2),
           oiPercentage: signal.oiPercentage.toFixed(2),
           priceImpact: signal.priceImpact.toFixed(2),
         },
-        '🎯 Trade detected - analyzing wallet'
+        '🎯 Trade detected - resolving wallet'
       );
 
-      // Step 2: Analyze wallet fingerprint via subgraph (now the only method)
+      // Step 2: NOW resolve proxy → signer (only for trades that pass thresholds)
+      // This saves subgraph calls for small trades that get filtered out
+      let walletAddress = trade.taker;
+      try {
+        const signerAddress = await polymarketSubgraph.getSignerFromProxy(
+          trade.taker
+        );
+        if (signerAddress) {
+          logger.debug(
+            {
+              proxy: trade.taker.substring(0, 10) + '...',
+              signer: signerAddress.substring(0, 10) + '...',
+            },
+            'Resolved proxy wallet to signer address'
+          );
+          walletAddress = signerAddress;
+        } else {
+          logger.debug(
+            { proxyAddress: trade.taker },
+            'No signer mapping found - using proxy address'
+          );
+        }
+      } catch (proxyError) {
+        logger.warn(
+          {
+            error:
+              proxyError instanceof Error
+                ? proxyError.message
+                : String(proxyError),
+            proxy: trade.taker.substring(0, 10) + '...',
+            tradeId: trade.id,
+          },
+          '⚠️ Proxy resolution failed - using proxy address for analysis'
+        );
+        // Continue with proxy address - better than skipping the trade
+      }
+
+      logger.info(
+        {
+          tradeId: trade.id,
+          wallet: walletAddress.substring(0, 10) + '...',
+        },
+        '🔍 Analyzing wallet fingerprint'
+      );
+
+      // Step 3: Analyze wallet fingerprint via subgraph
       const walletFingerprint = await walletForensicsService.analyzeWallet(
-        trade.taker,
+        walletAddress,
         {
           tradeSizeUSD: signal.tradeUsdValue,
           marketOI: parseFloat(signal.openInterest),
@@ -568,16 +546,14 @@ class TradeService {
       );
 
       // Check fingerprint status using decision framework
-      // NOTE: We no longer skip on wallet errors - alert-scorer handles error fingerprints
-      // by giving them a baseline suspicious score (see alert-scorer.ts:130-194)
       if (walletFingerprint.status === 'error') {
         logger.warn(
           {
-            wallet: trade.taker.substring(0, 10) + '...',
+            wallet: walletAddress.substring(0, 10) + '...',
             tradeId: trade.id,
             errorReason: walletFingerprint.errorReason,
           },
-          '⚠️ Wallet analysis failed - continuing with error fingerprint (will be scored as suspicious)'
+          '⚠️ Wallet analysis failed - continuing with error fingerprint'
         );
         await signalDetector.incrementStat('wallet_error_but_continued');
         // Continue to scoring - alert-scorer will handle this
@@ -588,7 +564,7 @@ class TradeService {
         const decision = DecisionFramework.handleWalletAnalysisError(
           new Error('Partial wallet data'),
           {
-            address: trade.taker,
+            address: walletAddress,
             tradeId: trade.id,
             dataSource: walletFingerprint.dataCompleteness.subgraph
               ? 'data-api'
@@ -605,7 +581,7 @@ class TradeService {
 
       logger.info(
         {
-          wallet: trade.taker.substring(0, 10) + '...',
+          wallet: walletAddress.substring(0, 10) + '...',
           status: walletFingerprint.status,
           isSuspicious: walletFingerprint.isSuspicious,
           confidenceLevel: walletFingerprint.confidenceLevel,
@@ -656,7 +632,7 @@ class TradeService {
           marketId: trade.marketId,
           marketQuestion,
           marketSlug,
-          walletAddress: trade.taker,
+          walletAddress: walletAddress,
           tradeSize: trade.size,
           tradePrice: trade.price,
           tradeSide: trade.side.toUpperCase() as 'BUY' | 'SELL',
@@ -672,7 +648,7 @@ class TradeService {
           {
             tradeId: trade.id,
             marketId: trade.marketId,
-            wallet: trade.taker.substring(0, 10) + '...',
+            wallet: walletAddress.substring(0, 10) + '...',
             score: alertScore.totalScore,
             classification: alertScore.classification,
           },
