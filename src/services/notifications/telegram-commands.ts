@@ -254,8 +254,8 @@ class TelegramCommandHandler {
     } else if (text === '/markets' || text === '/list') {
       await this.handleListMarkets(chatId);
     } else if (text.startsWith('/remove ')) {
-      const marketId = text.slice(8).trim();
-      await this.handleRemoveMarket(chatId, marketId);
+      const slug = text.slice(8).trim();
+      await this.handleRemoveMarket(chatId, slug);
     } else if (text === '/help') {
       await this.handleHelp(chatId);
     } else if (text === '/status') {
@@ -451,27 +451,42 @@ class TelegramCommandHandler {
    */
   private async handleRemoveMarket(
     chatId: number,
-    marketId: string
+    slug: string
   ): Promise<void> {
-    if (!marketId) {
-      await this.sendMessage(chatId, '❌ Usage: `/remove <market-id>`');
+    if (!slug) {
+      await this.sendMessage(
+        chatId,
+        '❌ Usage: `/remove <market-slug>`\nExample: `/remove maduro-out-in-2025`'
+      );
       return;
     }
 
     try {
       const prisma = db.getClient();
+
+      // Look up market by slug
+      const market = await prisma.market.findUnique({
+        where: { slug },
+      });
+
+      if (!market) {
+        await this.sendMessage(chatId, `❌ Market not found: \`${slug}\``);
+        return;
+      }
+
+      // Disable the market
       await prisma.market.update({
-        where: { id: marketId },
+        where: { id: market.id },
         data: { enabled: false },
       });
 
-      await marketService.removeMarket(marketId);
-      await this.sendMessage(chatId, `✅ Market removed: \`${marketId}\``);
-    } catch (error) {
+      await marketService.removeMarket(market.id);
       await this.sendMessage(
         chatId,
-        `❌ Failed to remove market: \`${marketId}\``
+        `✅ Market removed: \`${slug}\`\n(${market.question})`
       );
+    } catch (error) {
+      await this.sendMessage(chatId, `❌ Failed to remove market: \`${slug}\``);
     }
   }
 
@@ -670,7 +685,7 @@ class TelegramCommandHandler {
       `*Commands:*\n` +
       `• \`/add <slug>\` - Add a market by URL slug\n` +
       `• \`/markets\` - List monitored markets\n` +
-      `• \`/remove <id>\` - Remove a market\n` +
+      `• \`/remove <slug>\` - Remove a market\n` +
       `• \`/status\` - Show bot status\n` +
       `• \`/test <wallet>\` - Test wallet fingerprint\n` +
       `• \`/stats\` - Show filter funnel stats\n` +
