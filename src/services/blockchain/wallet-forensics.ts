@@ -1,7 +1,5 @@
-import {
-  polymarketSubgraph,
-  type SubgraphWalletData,
-} from '../polymarket/subgraph-client.js';
+import { type SubgraphWalletData } from '../polymarket/subgraph-client.js';
+import { polymarketDataApi } from '../polymarket/data-api-client.js';
 import { redis } from '../cache/redis.js';
 import { db, type PrismaClient } from '../database/prisma.js';
 import { logger } from '../../utils/logger.js';
@@ -10,8 +8,6 @@ import { normalizeVolume } from '../../utils/decimals.js';
 import { DecisionFramework } from '../data/decision-framework.js';
 import { calculateConfidence } from './confidence-calculator.js';
 import type { FingerprintStatus, DataCompleteness } from '../../types/index.js';
-import { retryApiCall } from '../../utils/retry.js';
-import { circuitBreakers } from '../../utils/circuit-breaker.js';
 import { withLock } from '../../utils/distributed-lock.js';
 
 const thresholds = getThresholds();
@@ -90,7 +86,7 @@ class WalletForensicsService {
   private readonly MAX_RECENT_WALLETS = 2000; // Increased to cache more wallets
 
   private constructor() {
-    logger.info('Wallet forensics service initialized (subgraph-only mode)');
+    logger.info('Wallet forensics service initialized (Data API mode)');
   }
 
   /**
@@ -209,7 +205,7 @@ class WalletForensicsService {
 
     logger.info(
       { address: normalizedAddress },
-      'Analyzing wallet via subgraph'
+      'Analyzing wallet via Data API'
     );
 
     const dataCompleteness: DataCompleteness = {
@@ -219,75 +215,100 @@ class WalletForensicsService {
       timestamp: Date.now(),
     };
 
-    let subgraphData: SubgraphWalletData | null = null;
     const errors: string[] = [];
 
-    // Use subgraph directly for wallet fingerprinting
-    // Data API doesn't work with proxy wallet addresses
+    // Use Data API for wallet analysis (no rate limiting issues)
     try {
-      subgraphData = await circuitBreakers.subgraph.execute(async () => {
-        return await retryApiCall(
-          () => polymarketSubgraph.getWalletData(normalizedAddress),
-          'subgraph.getWalletData'
-        );
-      });
+      const dataApiData =
+        await polymarketDataApi.getUserData(normalizedAddress);
 
-      dataCompleteness.subgraph = true;
+      dataCompleteness.dataApi = true;
 
       // Check if we have data
-      const hasSubgraphData =
-        subgraphData.activity ||
-        subgraphData.clobActivity ||
-        subgraphData.positions;
+      const hasData =
+        dataApiData.activity || dataApiData.recentTrades.length > 0;
 
-      if (!hasSubgraphData) {
+      if (!hasData) {
         logger.info(
           {
             address: normalizedAddress,
             responseTime: Date.now() - startTime,
           },
-          'No data found in subgraph - new user'
+          'No data found in Data API - new user'
         );
         return this.createNewUserFingerprint(normalizedAddress, tradeContext);
       }
 
-      // Calculate subgraph flags
-      const subgraphFlags = this.calculateSubgraphFlags(
-        subgraphData,
-        tradeContext
-      );
-
-      // Use CLOB activity as primary source
-      const clobActivity = subgraphData.clobActivity;
-      const splitActivity = subgraphData.activity;
-
-      // Combined metrics
+      // Extract metrics from Data API response
+      const activity = dataApiData.activity;
       const tradeCount =
-        (clobActivity?.tradeCount ?? 0) + (splitActivity?.tradeCount ?? 0);
-      const volumeUSD =
-        normalizeVolume(clobActivity?.totalVolumeUSD, 'subgraph') +
-        normalizeVolume(splitActivity?.totalVolumeUSD, 'subgraph');
+        activity?.totalTrades ?? dataApiData.recentTrades.length;
+      const volumeUSD = parseFloat(activity?.totalVolume ?? '0');
+      const firstTradeTimestamp = activity?.firstTradeTimestamp ?? null;
 
       // Account age
       let accountAgeDays: number | null = null;
-      const firstTrade =
-        clobActivity?.firstTradeTimestamp ?? splitActivity?.firstTradeTimestamp;
-      if (firstTrade) {
+      if (firstTradeTimestamp) {
         accountAgeDays = Math.floor(
-          (Date.now() - firstTrade) / (1000 * 60 * 60 * 24)
+          (Date.now() - firstTradeTimestamp * 1000) / (1000 * 60 * 60 * 24)
         );
       }
+
+      // Calculate position concentration from recent trades
+      const marketCounts = new Map<string, number>();
+      for (const trade of dataApiData.recentTrades) {
+        const count = marketCounts.get(trade.conditionId) || 0;
+        marketCounts.set(trade.conditionId, count + 1);
+      }
+      const maxMarketTrades = Math.max(...marketCounts.values(), 0);
+      const totalTrades = dataApiData.recentTrades.length;
+      const maxPositionConcentration =
+        totalTrades > 0 ? (maxMarketTrades / totalTrades) * 100 : 0;
+
+      // Calculate flags using Data API data
+      const subgraphFlags = this.calculateFlagsFromDataApi(
+        tradeCount,
+        volumeUSD,
+        accountAgeDays,
+        maxPositionConcentration,
+        tradeContext
+      );
 
       // Determine if suspicious
       const suspiciousFlagCount =
         Object.values(subgraphFlags).filter(Boolean).length;
       const isSuspicious = suspiciousFlagCount >= 2;
 
-      // Calculate proper confidence based on data quality
+      // Create SubgraphWalletData-like structure for confidence calculation
+      const walletDataForConfidence: SubgraphWalletData = {
+        activity: null, // Not using splits/merges data
+        clobActivity: {
+          address: normalizedAddress,
+          tradeCount,
+          totalVolumeUSD: volumeUSD,
+          firstTradeTimestamp: firstTradeTimestamp ?? null,
+          asMaker: 0,
+          asTaker: tradeCount,
+          recentTrades: [],
+        },
+        positions: {
+          address: normalizedAddress,
+          positions: Array.from(marketCounts.entries()).map(
+            ([marketId, count]) => ({
+              marketId,
+              valueUSD: count, // Using trade count as proxy
+            })
+          ),
+          totalValueUSD: volumeUSD,
+          maxPositionPercentage: maxPositionConcentration,
+        },
+        queriedAt: new Date(),
+      };
+
       const confidence = calculateConfidence(
         dataCompleteness,
-        subgraphData,
-        null, // No Data API data in this path
+        walletDataForConfidence,
+        dataApiData,
         errors.length > 0 ? errors : undefined
       );
 
@@ -302,9 +323,8 @@ class WalletForensicsService {
           polymarketTradeCount: tradeCount,
           polymarketVolumeUSD: volumeUSD,
           polymarketAccountAgeDays: accountAgeDays,
-          maxPositionConcentration:
-            subgraphData.positions?.maxPositionPercentage ?? 0,
-          dataSource: 'subgraph',
+          maxPositionConcentration,
+          dataSource: 'data-api',
         },
         analyzedAt: new Date(),
         // Backwards compatibility
@@ -318,7 +338,9 @@ class WalletForensicsService {
         metadata: {
           totalTransactions: tradeCount,
           walletAgeDays: accountAgeDays ?? 0,
-          firstSeenTimestamp: firstTrade ? firstTrade * 1000 : null,
+          firstSeenTimestamp: firstTradeTimestamp
+            ? firstTradeTimestamp * 1000
+            : null,
           cexFundingSource: null,
           cexFundingTimestamp: null,
           polymarketNetflowPercentage: 100,
@@ -340,14 +362,15 @@ class WalletForensicsService {
           tradeCount,
           volumeUSD,
           accountAgeDays,
+          dataSource: 'data-api',
         },
-        'Wallet analysis complete via subgraph'
+        'Wallet analysis complete via Data API'
       );
 
       return fingerprint;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      errors.push(`Subgraph: ${errorMsg}`);
+      errors.push(`DataAPI: ${errorMsg}`);
       logger.error(
         {
           error: errorMsg,
@@ -355,22 +378,76 @@ class WalletForensicsService {
           responseTime: Date.now() - startTime,
           dataCompleteness,
         },
-        'Subgraph wallet analysis failed'
+        'Data API wallet analysis failed'
       );
     }
 
-    // Subgraph failed - return error fingerprint
+    // Data API failed - return error fingerprint
     return this.createErrorFingerprint(
       normalizedAddress,
       errors.join('; '),
       dataCompleteness,
-      subgraphData
-        ? {
-            activity: subgraphData.activity || null,
-            clobActivity: subgraphData.clobActivity || null,
-          }
-        : undefined
+      undefined
     );
+  }
+
+  /**
+   * Calculate flags from Data API data
+   */
+  private calculateFlagsFromDataApi(
+    tradeCount: number,
+    volumeUSD: number,
+    accountAgeDays: number | null,
+    maxPositionConcentration: number,
+    tradeContext?: { tradeSizeUSD: number; marketOI: number }
+  ): SubgraphFlags {
+    // lowTradeCount: Wallet has fewer than threshold trades
+    const lowTradeCount = tradeCount <= thresholds.subgraphLowTradeCount;
+
+    // youngAccount: Wallet first trade is recent
+    const youngAccount =
+      accountAgeDays === null ||
+      accountAgeDays <= thresholds.subgraphYoungAccountDays;
+
+    // lowVolume: Lifetime volume below threshold
+    const lowVolume = volumeUSD <= thresholds.subgraphLowVolumeUSD;
+
+    // highConcentration: Majority of position value in one market
+    const highConcentration =
+      maxPositionConcentration >= thresholds.subgraphHighConcentrationPct;
+
+    // freshFatBet: New wallet making large bets
+    let freshFatBet = false;
+    if (tradeContext) {
+      const priorTrades = tradeCount - 1;
+      const isLargeTrade =
+        tradeContext.tradeSizeUSD >= thresholds.subgraphFreshFatBetSizeUSD;
+      const isSmallMarket =
+        tradeContext.marketOI <= thresholds.subgraphFreshFatBetMaxOI;
+      const isFreshAccount =
+        priorTrades <= thresholds.subgraphFreshFatBetPriorTrades;
+
+      freshFatBet = isLargeTrade && isSmallMarket && isFreshAccount;
+
+      if (freshFatBet) {
+        logger.info(
+          {
+            priorTrades,
+            tradeSizeUSD: tradeContext.tradeSizeUSD,
+            marketOI: tradeContext.marketOI,
+          },
+          'Fresh fat bet pattern detected'
+        );
+      }
+    }
+
+    return {
+      lowTradeCount,
+      youngAccount,
+      lowVolume,
+      highConcentration,
+      freshFatBet,
+    };
   }
 
   // Note: analyzeWalletViaSubgraph method removed - use analyzeWallet instead
@@ -604,7 +681,7 @@ class WalletForensicsService {
         polymarketVolumeUSD: volumeUSD,
         polymarketAccountAgeDays: null,
         maxPositionConcentration: 0,
-        dataSource: dataCompleteness.cache ? 'cache' : 'subgraph',
+        dataSource: dataCompleteness.cache ? 'cache' : 'data-api',
       },
       analyzedAt: new Date(),
       // Backwards compatibility
@@ -666,7 +743,7 @@ class WalletForensicsService {
         polymarketVolumeUSD: 0,
         polymarketAccountAgeDays: 0,
         maxPositionConcentration: 100, // First trade = 100% concentration
-        dataSource: 'subgraph',
+        dataSource: 'data-api',
       },
       analyzedAt: new Date(),
       // Backwards compatibility
