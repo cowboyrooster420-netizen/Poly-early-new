@@ -551,16 +551,21 @@ class PolymarketWebSocketService {
     );
 
     try {
-      // Polymarket expects all asset IDs in a single subscribe message
+      // Polymarket expects assets_ids with type: 'market' for subscriptions
       const assetIds = Array.from(this.subscribedMarkets);
+
+      // Send subscription message
       const message = {
-        type: 'MARKET',
         assets_ids: assetIds,
+        type: 'market',
       };
 
       this.ws.send(JSON.stringify(message));
       logger.info(
-        { assetCount: assetIds.length },
+        {
+          assetCount: assetIds.length,
+          firstAsset: assetIds[0]?.substring(0, 16),
+        },
         'Sent subscription message to Polymarket WebSocket'
       );
     } catch (error) {
