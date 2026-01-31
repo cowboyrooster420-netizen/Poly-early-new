@@ -29,7 +29,9 @@ class TradeService {
   private deadLetterQueue: QueuedTrade[] = [];
   private isProcessing = false;
   private processingPromise: Promise<void> | null = null;
-  private readonly MAX_QUEUE_SIZE = 1000;
+  private readonly MAX_QUEUE_SIZE = 5000; // Increased from 1000 to handle rate limit backoffs
+  private readonly HIGH_WATER_MARK = 2500; // 50% - signal backpressure
+  private readonly LOW_WATER_MARK = 1000; // 20% - resume normal operation
   private readonly MAX_RETRY_ATTEMPTS = 3;
   private readonly RETRY_DELAY_MS = 1000; // Initial delay, exponentially increases
 
@@ -881,13 +883,33 @@ class TradeService {
     deadLetterQueue: number;
     isProcessing: boolean;
     totalProcessed: number;
+    isUnderPressure: boolean;
+    queuePercentage: number;
   } {
     return {
       mainQueue: this.tradeQueue.length,
       deadLetterQueue: this.deadLetterQueue.length,
       isProcessing: this.isProcessing,
       totalProcessed: this.tradeCount,
+      isUnderPressure: this.isUnderPressure(),
+      queuePercentage: (this.tradeQueue.length / this.MAX_QUEUE_SIZE) * 100,
     };
+  }
+
+  /**
+   * Check if queue is under pressure (above high water mark)
+   * Used for backpressure signaling to upstream pollers
+   */
+  public isUnderPressure(): boolean {
+    return this.tradeQueue.length >= this.HIGH_WATER_MARK;
+  }
+
+  /**
+   * Check if queue has recovered (below low water mark)
+   * Used to resume normal polling after backpressure
+   */
+  public hasRecovered(): boolean {
+    return this.tradeQueue.length <= this.LOW_WATER_MARK;
   }
 
   /**

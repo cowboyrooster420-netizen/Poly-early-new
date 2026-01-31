@@ -1,6 +1,7 @@
 import { polymarketDataApi, type DataApiTrade } from './data-api-client.js';
 import { tradeService } from './trade-service.js';
 import { marketService } from './market-service.js';
+import { polymarketSubgraph } from './subgraph-client.js';
 import { logger } from '../../utils/logger.js';
 import type { PolymarketTrade } from '../../types/index.js';
 
@@ -126,6 +127,32 @@ class TradePollingService {
    */
   private async pollTrades(): Promise<void> {
     try {
+      // Check for backpressure - skip polling if system is overwhelmed
+      const queueStats = tradeService.getQueueStats();
+      const subgraphStatus = polymarketSubgraph.getRateLimiterStatus();
+
+      if (queueStats.isUnderPressure) {
+        logger.warn(
+          {
+            queueSize: queueStats.mainQueue,
+            queuePercentage: queueStats.queuePercentage.toFixed(1),
+            deadLetterSize: queueStats.deadLetterQueue,
+          },
+          '⏸️ Skipping trade poll - queue under pressure (backpressure active)'
+        );
+        return;
+      }
+
+      if (subgraphStatus.isBackingOff) {
+        logger.warn(
+          {
+            rateLimiterQueueSize: subgraphStatus.queueSize,
+          },
+          '⏸️ Skipping trade poll - subgraph rate limiter backing off'
+        );
+        return;
+      }
+
       // Get monitored condition IDs to filter trades
       const conditionIds = marketService.getMonitoredConditionIds();
 
@@ -265,13 +292,22 @@ class TradePollingService {
 
         // Wait between batches to let rate limiter recover (skip delay after last batch)
         if (batchIndex < totalBatches - 1) {
+          // Adaptive delay: increase if subgraph is under pressure
+          const subgraphPressure = polymarketSubgraph.getRateLimiterStatus();
+          const adaptiveDelay = subgraphPressure.isBackingOff
+            ? this.BATCH_DELAY_MS * 3 // Triple delay when backing off
+            : subgraphPressure.queueSize > 5
+              ? this.BATCH_DELAY_MS * 2 // Double delay when queue building
+              : this.BATCH_DELAY_MS;
+
           logger.debug(
-            { delayMs: this.BATCH_DELAY_MS },
+            {
+              delayMs: adaptiveDelay,
+              subgraphQueueSize: subgraphPressure.queueSize,
+            },
             'Waiting between batches to avoid rate limits'
           );
-          await new Promise((resolve) =>
-            setTimeout(resolve, this.BATCH_DELAY_MS)
-          );
+          await new Promise((resolve) => setTimeout(resolve, adaptiveDelay));
         }
 
         // Clean up old IDs to prevent memory leak (time-based + size-based)

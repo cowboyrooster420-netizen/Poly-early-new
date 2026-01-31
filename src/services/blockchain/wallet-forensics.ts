@@ -86,8 +86,8 @@ class WalletForensicsService {
     string,
     { fingerprint: WalletFingerprint; timestamp: number }
   >();
-  private readonly RECENT_WALLET_TTL_MS = 5 * 60 * 1000; // 5 minutes
-  private readonly MAX_RECENT_WALLETS = 1000;
+  private readonly RECENT_WALLET_TTL_MS = 15 * 60 * 1000; // 15 minutes (increased to reduce subgraph load)
+  private readonly MAX_RECENT_WALLETS = 2000; // Increased to cache more wallets
 
   private constructor() {
     logger.info('Wallet forensics service initialized (subgraph-only mode)');

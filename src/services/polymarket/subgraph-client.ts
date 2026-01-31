@@ -343,16 +343,74 @@ const RECENT_TRADES_QUERY = `
 `;
 
 /**
- * Rate limiter for subgraph queries
+ * Adaptive rate limiter for subgraph queries
+ * Automatically backs off when rate limited (429s)
  */
 class SubgraphRateLimiter {
   private queue: Array<() => Promise<void>> = [];
   private requestTimestamps: number[] = [];
-  private readonly maxRequestsPerSecond: number;
+  private maxRequestsPerSecond: number;
+  private readonly baseMaxRequestsPerSecond: number;
   private processing = false;
+  // Adaptive backoff state
+  private consecutiveRateLimits = 0;
+  private lastRateLimitTime = 0;
+  private backoffUntil = 0;
 
   constructor(maxRequestsPerSecond: number) {
     this.maxRequestsPerSecond = maxRequestsPerSecond;
+    this.baseMaxRequestsPerSecond = maxRequestsPerSecond;
+  }
+
+  /**
+   * Record a rate limit (429) response
+   * This will trigger adaptive backoff
+   */
+  public recordRateLimit(): void {
+    const now = Date.now();
+    this.consecutiveRateLimits++;
+    this.lastRateLimitTime = now;
+
+    // Exponential backoff: 5s, 10s, 20s, 40s, max 60s
+    const backoffMs = Math.min(
+      5000 * Math.pow(2, this.consecutiveRateLimits - 1),
+      60000
+    );
+    this.backoffUntil = now + backoffMs;
+
+    // Reduce rate limit temporarily (min 0.5 req/s)
+    this.maxRequestsPerSecond = Math.max(
+      0.5,
+      this.baseMaxRequestsPerSecond / (this.consecutiveRateLimits + 1)
+    );
+
+    logger.warn(
+      {
+        consecutiveRateLimits: this.consecutiveRateLimits,
+        backoffMs,
+        newRateLimit: this.maxRequestsPerSecond,
+        queueSize: this.queue.length,
+      },
+      'Subgraph rate limiter backing off due to 429'
+    );
+  }
+
+  /**
+   * Record a successful request
+   * Gradually recover rate limit after successful requests
+   */
+  public recordSuccess(): void {
+    if (this.consecutiveRateLimits > 0) {
+      // Reset after 30 seconds of no rate limits
+      if (Date.now() - this.lastRateLimitTime > 30000) {
+        this.consecutiveRateLimits = 0;
+        this.maxRequestsPerSecond = this.baseMaxRequestsPerSecond;
+        logger.info(
+          { restoredRateLimit: this.maxRequestsPerSecond },
+          'Subgraph rate limiter recovered to normal rate'
+        );
+      }
+    }
   }
 
   public async execute<T>(fn: () => Promise<T>): Promise<T> {
@@ -360,6 +418,7 @@ class SubgraphRateLimiter {
       this.queue.push(async () => {
         try {
           const result = await fn();
+          this.recordSuccess();
           resolve(result);
         } catch (error) {
           reject(error);
@@ -377,6 +436,17 @@ class SubgraphRateLimiter {
 
     while (this.queue.length > 0) {
       const now = Date.now();
+
+      // Check if we're in backoff period
+      if (now < this.backoffUntil) {
+        const waitTime = this.backoffUntil - now;
+        logger.debug(
+          { waitTime, queueSize: this.queue.length },
+          'Rate limiter in backoff period'
+        );
+        await this.sleep(waitTime);
+        continue;
+      }
 
       this.requestTimestamps = this.requestTimestamps.filter(
         (timestamp) => now - timestamp < 1000
@@ -397,6 +467,20 @@ class SubgraphRateLimiter {
     }
 
     this.processing = false;
+  }
+
+  /**
+   * Get current queue size (for backpressure)
+   */
+  public getQueueSize(): number {
+    return this.queue.length;
+  }
+
+  /**
+   * Check if rate limiter is currently backing off
+   */
+  public isBackingOff(): boolean {
+    return Date.now() < this.backoffUntil;
   }
 
   private sleep(ms: number): Promise<void> {
@@ -443,8 +527,9 @@ class PolymarketSubgraphClient {
       headers: { 'Content-Type': 'application/json' },
     });
 
-    // Rate limit: 3 requests per second (batch processing spreads out requests)
-    this.rateLimiter = new SubgraphRateLimiter(3);
+    // Rate limit: 1.5 requests per second (conservative to avoid Goldsky 429s)
+    // Adaptive backoff will further reduce if we hit rate limits
+    this.rateLimiter = new SubgraphRateLimiter(1.5);
 
     logger.info(
       'Polymarket subgraph client initialized with wallet mapping support'
@@ -993,9 +1078,15 @@ class PolymarketSubgraphClient {
           statusCode === 429 ||
           (statusCode !== undefined && statusCode >= 500));
 
+      // Record rate limit in adaptive rate limiter
+      if (isRateLimited) {
+        this.rateLimiter.recordRateLimit();
+      }
+
       if (isRetryable && attempt < this.maxRetries) {
         // Back off more aggressively for rate limits (429)
-        const baseDelay = isRateLimited ? 5000 : this.baseRetryDelay;
+        // Use longer delays since we're hitting Goldsky limits
+        const baseDelay = isRateLimited ? 10000 : this.baseRetryDelay;
         const delay = baseDelay * Math.pow(2, attempt - 1);
         logger.warn(
           {
@@ -1018,6 +1109,26 @@ class PolymarketSubgraphClient {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Check if the subgraph client is under pressure (backing off or queue building up)
+   * Used for backpressure signaling to upstream services
+   */
+  public isUnderPressure(): boolean {
+    return (
+      this.rateLimiter.isBackingOff() || this.rateLimiter.getQueueSize() > 10
+    );
+  }
+
+  /**
+   * Get rate limiter status for monitoring
+   */
+  public getRateLimiterStatus(): { isBackingOff: boolean; queueSize: number } {
+    return {
+      isBackingOff: this.rateLimiter.isBackingOff(),
+      queueSize: this.rateLimiter.getQueueSize(),
+    };
   }
 }
 
