@@ -535,9 +535,9 @@ class TradeService {
           );
         }
       } catch (proxyError) {
-        // CRITICAL: Proxy resolution failure means we'd analyze the wrong wallet
-        // which gives 100% false negatives. Skip this analysis entirely.
-        logger.error(
+        // Proxy resolution failed - continue with proxy address
+        // Better to analyze proxy than skip entirely (would get zero alerts)
+        logger.warn(
           {
             error:
               proxyError instanceof Error
@@ -548,9 +548,9 @@ class TradeService {
             marketId: trade.marketId,
             tradeUsdValue: signal.tradeUsdValue.toFixed(2),
           },
-          '🚨 Proxy resolution failed - SKIPPING analysis (would analyze wrong wallet)'
+          '⚠️ Proxy resolution failed - continuing with proxy address'
         );
-        return; // Skip this trade's analysis - don't continue with proxy address
+        // walletAddress remains as trade.taker (proxy)
       }
 
       logger.info(

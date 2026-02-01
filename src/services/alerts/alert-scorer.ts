@@ -138,9 +138,8 @@ class AlertScorerService {
     // 0. CHECK FINGERPRINT STATUS
     // ----------------------------------
     if ('status' in walletFingerprint && walletFingerprint.status === 'error') {
-      // Wallet analysis failed - we have no reliable data about this wallet
-      // Don't give automatic suspicious score as that causes false positives
-      // Return early with IGNORE result - skip this trade's scoring entirely
+      // Wallet analysis failed - give moderate score and continue
+      // Better to alert with caution than miss potential insiders
       logger.warn(
         {
           wallet: walletFingerprint.address,
@@ -148,13 +147,62 @@ class AlertScorerService {
           tradeId: tradeSignal.walletAddress,
           marketId: tradeSignal.marketId,
         },
-        'Wallet analysis failed - skipping scoring (no reliable wallet data)'
+        'Wallet analysis failed - scoring with moderate suspicion'
       );
-      await this.incrementStat('wallet_error_skipped');
+      await this.incrementStat('wallet_error_but_scored');
 
-      return this.createIgnoreResult(
-        `Wallet analysis failed: ${walletFingerprint.errorReason || 'unknown error'}`
+      // Give error fingerprints a moderate baseline score (not max suspicious)
+      const errorWalletScore = 25; // 50% of max 50 points - moderate, not extreme
+      const walletScore100 = errorWalletScore * 2; // Scale to 0-100
+
+      // Continue with impact-based scoring
+      const impactPercentage = tradeSignal.impactPercentage;
+      const impactMethod = tradeSignal.impactMethod;
+      const impactThreshold = tradeSignal.impactThreshold;
+
+      let impactScore = this.calculateImpactScore(
+        impactPercentage,
+        impactMethod,
+        impactThreshold
       );
+
+      const marketSizeMultiplier = this.getMarketSizeMultiplier(openInterest);
+      const dormancyMultiplier = await this.getDormancyMultiplier(
+        tradeSignal.marketId,
+        tradeSignal.timestamp
+      );
+
+      impactScore = impactScore * marketSizeMultiplier * dormancyMultiplier;
+      impactScore = Math.min(100, impactScore);
+
+      const walletContribution = 0.6 * walletScore100;
+      const impactContribution = 0.4 * impactScore;
+      const finalScore = walletContribution + impactContribution;
+
+      const classification = this.classify(finalScore);
+
+      await this.incrementStat(
+        `classification_${classification.toLowerCase()}`
+      );
+
+      return {
+        totalScore: Math.round(finalScore),
+        breakdown: {
+          walletScore: Math.round(walletScore100),
+          impactScore: Math.round(impactScore),
+          impactMethod,
+          impactPercentage,
+          walletContribution: Math.round(walletContribution),
+          impactContribution: Math.round(impactContribution),
+        },
+        multipliers: {
+          marketSize: marketSizeMultiplier,
+          dormancy: dormancyMultiplier,
+        },
+        classification,
+        filtersPassed: true,
+        filterReason: 'Wallet API error - scored with moderate suspicion',
+      };
     }
 
     // ----------------------------------
