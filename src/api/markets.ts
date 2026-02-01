@@ -4,6 +4,70 @@ import axios from 'axios';
 import { db } from '../services/database/prisma.js';
 import { marketService } from '../services/polymarket/market-service.js';
 import { logger } from '../utils/logger.js';
+import { getEnv } from '../config/env.js';
+
+/**
+ * Bearer token authentication middleware
+ * Checks for Authorization header with token from API_SECRET_TOKEN env var
+ */
+function authenticateRequest(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  done: (err?: Error) => void
+): void {
+  const env = getEnv();
+  const secretToken = env.API_SECRET_TOKEN;
+
+  // If no token is configured, reject all authenticated requests
+  if (!secretToken) {
+    logger.warn(
+      'API_SECRET_TOKEN not configured - rejecting authenticated request'
+    );
+    void reply.code(401).send({
+      success: false,
+      error: 'API authentication not configured',
+    });
+    return;
+  }
+
+  const authHeader = request.headers.authorization;
+
+  if (!authHeader) {
+    void reply.code(401).send({
+      success: false,
+      error: 'Missing Authorization header',
+    });
+    return;
+  }
+
+  // Expect "Bearer <token>" format
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') {
+    void reply.code(401).send({
+      success: false,
+      error: 'Invalid Authorization header format. Expected: Bearer <token>',
+    });
+    return;
+  }
+
+  const providedToken = parts[1];
+
+  // Use timing-safe comparison to prevent timing attacks
+  if (
+    !providedToken ||
+    providedToken.length !== secretToken.length ||
+    providedToken !== secretToken
+  ) {
+    logger.warn({ ip: request.ip }, 'Invalid API token provided');
+    void reply.code(403).send({
+      success: false,
+      error: 'Invalid API token',
+    });
+    return;
+  }
+
+  done();
+}
 
 interface AddMarketBody {
   slug: string;
@@ -62,12 +126,10 @@ export async function registerMarketRoutes(
   );
 
   // Add a market by slug
-  app.post(
+  app.post<{ Body: AddMarketBody }>(
     '/api/markets',
-    async (
-      request: FastifyRequest<{ Body: AddMarketBody }>,
-      reply: FastifyReply
-    ) => {
+    { preHandler: authenticateRequest },
+    async (request, reply) => {
       try {
         const { slug, tier = 2, category = 'misc' } = request.body;
 
@@ -186,12 +248,10 @@ export async function registerMarketRoutes(
   );
 
   // Remove a market
-  app.delete(
+  app.delete<{ Params: { marketId: string } }>(
     '/api/markets/:marketId',
-    async (
-      request: FastifyRequest<{ Params: { marketId: string } }>,
-      reply: FastifyReply
-    ) => {
+    { preHandler: authenticateRequest },
+    async (request, reply) => {
       try {
         const { marketId } = request.params;
 
@@ -223,6 +283,7 @@ export async function registerMarketRoutes(
   // Reload markets from database
   app.post(
     '/api/markets/reload',
+    { preHandler: authenticateRequest },
     async (_request: FastifyRequest, reply: FastifyReply) => {
       try {
         await marketService.reloadMarkets();

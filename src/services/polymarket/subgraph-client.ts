@@ -357,6 +357,8 @@ class SubgraphRateLimiter {
   private consecutiveRateLimits = 0;
   private lastRateLimitTime = 0;
   private backoffUntil = 0;
+  // Queue bounds to prevent unbounded growth
+  private static readonly MAX_QUEUE_SIZE = 100;
 
   constructor(maxRequestsPerSecond: number) {
     this.maxRequestsPerSecond = maxRequestsPerSecond;
@@ -416,6 +418,21 @@ class SubgraphRateLimiter {
 
   public async execute<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
+      // Reject new requests when queue is full to prevent unbounded growth
+      if (this.queue.length >= SubgraphRateLimiter.MAX_QUEUE_SIZE) {
+        logger.warn(
+          {
+            queueSize: this.queue.length,
+            maxSize: SubgraphRateLimiter.MAX_QUEUE_SIZE,
+          },
+          'Subgraph rate limiter queue full, rejecting request'
+        );
+        reject(
+          new Error('Rate limiter queue full - too many pending requests')
+        );
+        return;
+      }
+
       this.queue.push(async () => {
         try {
           const result = await fn();

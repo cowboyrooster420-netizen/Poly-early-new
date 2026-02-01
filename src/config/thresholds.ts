@@ -1,4 +1,39 @@
 /**
+ * Helper function to safely parse and validate numeric thresholds
+ * Returns the default value if:
+ * - The value is not a valid number (NaN)
+ * - The value is outside the specified bounds
+ */
+function parseThreshold(
+  envValue: string | undefined,
+  defaultValue: number,
+  options?: { min?: number; max?: number }
+): number {
+  if (envValue === undefined || envValue === '') {
+    return defaultValue;
+  }
+
+  const parsed = Number(envValue);
+
+  // Check for NaN
+  if (Number.isNaN(parsed)) {
+    return defaultValue;
+  }
+
+  // Check minimum bound
+  if (options?.min !== undefined && parsed < options.min) {
+    return defaultValue;
+  }
+
+  // Check maximum bound
+  if (options?.max !== undefined && parsed > options.max) {
+    return defaultValue;
+  }
+
+  return parsed;
+}
+
+/**
  * Detection threshold configuration
  * These values control when trades trigger insider signals
  */
@@ -108,67 +143,107 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
  */
 export function getThresholds(): DetectionThresholds {
   return {
-    minOiPercentage:
-      Number(process.env['MIN_OI_PERCENTAGE']) ||
+    minOiPercentage: parseThreshold(
+      process.env['MIN_OI_PERCENTAGE'],
       DEFAULT_THRESHOLDS.minOiPercentage,
-    minPriceImpact:
-      Number(process.env['MIN_PRICE_IMPACT']) ||
+      { min: 0, max: 100 }
+    ),
+    minPriceImpact: parseThreshold(
+      process.env['MIN_PRICE_IMPACT'],
       DEFAULT_THRESHOLDS.minPriceImpact,
-    dormantHoursNoLargeTrades:
-      Number(process.env['DORMANT_HOURS_NO_LARGE_TRADES']) ||
+      { min: 0, max: 100 }
+    ),
+    dormantHoursNoLargeTrades: parseThreshold(
+      process.env['DORMANT_HOURS_NO_LARGE_TRADES'],
       DEFAULT_THRESHOLDS.dormantHoursNoLargeTrades,
-    dormantHoursNoPriceMoves:
-      Number(process.env['DORMANT_HOURS_NO_PRICE_MOVES']) ||
+      { min: 0, max: 168 } // max 1 week
+    ),
+    dormantHoursNoPriceMoves: parseThreshold(
+      process.env['DORMANT_HOURS_NO_PRICE_MOVES'],
       DEFAULT_THRESHOLDS.dormantHoursNoPriceMoves,
-    dormantLargeTradeThreshold:
-      Number(process.env['DORMANT_LARGE_TRADE_THRESHOLD']) ||
+      { min: 0, max: 168 }
+    ),
+    dormantLargeTradeThreshold: parseThreshold(
+      process.env['DORMANT_LARGE_TRADE_THRESHOLD'],
       DEFAULT_THRESHOLDS.dormantLargeTradeThreshold,
-    dormantPriceMoveThreshold:
-      Number(process.env['DORMANT_PRICE_MOVE_THRESHOLD']) ||
+      { min: 0, max: 10000000 } // max $10M
+    ),
+    dormantPriceMoveThreshold: parseThreshold(
+      process.env['DORMANT_PRICE_MOVE_THRESHOLD'],
       DEFAULT_THRESHOLDS.dormantPriceMoveThreshold,
-    minWalletScore:
-      Number(process.env['MIN_WALLET_SCORE']) ||
+      { min: 0, max: 100 }
+    ),
+    minWalletScore: parseThreshold(
+      process.env['MIN_WALLET_SCORE'],
       DEFAULT_THRESHOLDS.minWalletScore,
-    minConfidenceScore:
-      Number(process.env['MIN_CONFIDENCE_SCORE']) ||
+      { min: 0, max: 100 }
+    ),
+    minConfidenceScore: parseThreshold(
+      process.env['MIN_CONFIDENCE_SCORE'],
       DEFAULT_THRESHOLDS.minConfidenceScore,
-    maxWalletTransactions:
-      Number(process.env['MAX_WALLET_TRANSACTIONS']) ||
+      { min: 0, max: 100 }
+    ),
+    maxWalletTransactions: parseThreshold(
+      process.env['MAX_WALLET_TRANSACTIONS'],
       DEFAULT_THRESHOLDS.maxWalletTransactions,
-    minWalletAgeInDays:
-      Number(process.env['MIN_WALLET_AGE_DAYS']) ||
+      { min: 0, max: 100000 }
+    ),
+    minWalletAgeInDays: parseThreshold(
+      process.env['MIN_WALLET_AGE_DAYS'],
       DEFAULT_THRESHOLDS.minWalletAgeInDays,
-    minNetflowPercentage:
-      Number(process.env['MIN_NETFLOW_PERCENTAGE']) ||
+      { min: 0, max: 3650 } // max 10 years
+    ),
+    minNetflowPercentage: parseThreshold(
+      process.env['MIN_NETFLOW_PERCENTAGE'],
       DEFAULT_THRESHOLDS.minNetflowPercentage,
-    cexFundingWindowDays:
-      Number(process.env['CEX_FUNDING_WINDOW_DAYS']) ||
+      { min: 0, max: 100 }
+    ),
+    cexFundingWindowDays: parseThreshold(
+      process.env['CEX_FUNDING_WINDOW_DAYS'],
       DEFAULT_THRESHOLDS.cexFundingWindowDays,
+      { min: 0, max: 365 }
+    ),
     // Subgraph-based thresholds
-    subgraphLowTradeCount:
-      Number(process.env['SUBGRAPH_LOW_TRADE_COUNT']) ||
+    subgraphLowTradeCount: parseThreshold(
+      process.env['SUBGRAPH_LOW_TRADE_COUNT'],
       DEFAULT_THRESHOLDS.subgraphLowTradeCount,
-    subgraphYoungAccountDays:
-      Number(process.env['SUBGRAPH_YOUNG_ACCOUNT_DAYS']) ||
+      { min: 0, max: 10000 }
+    ),
+    subgraphYoungAccountDays: parseThreshold(
+      process.env['SUBGRAPH_YOUNG_ACCOUNT_DAYS'],
       DEFAULT_THRESHOLDS.subgraphYoungAccountDays,
-    subgraphLowVolumeUSD:
-      Number(process.env['SUBGRAPH_LOW_VOLUME_USD']) ||
+      { min: 0, max: 365 }
+    ),
+    subgraphLowVolumeUSD: parseThreshold(
+      process.env['SUBGRAPH_LOW_VOLUME_USD'],
       DEFAULT_THRESHOLDS.subgraphLowVolumeUSD,
-    subgraphHighConcentrationPct:
-      Number(process.env['SUBGRAPH_HIGH_CONCENTRATION_PCT']) ||
+      { min: 0, max: 100000000 } // max $100M
+    ),
+    subgraphHighConcentrationPct: parseThreshold(
+      process.env['SUBGRAPH_HIGH_CONCENTRATION_PCT'],
       DEFAULT_THRESHOLDS.subgraphHighConcentrationPct,
-    subgraphFreshFatBetPriorTrades:
-      Number(process.env['SUBGRAPH_FRESH_FAT_BET_PRIOR_TRADES']) ||
+      { min: 0, max: 100 }
+    ),
+    subgraphFreshFatBetPriorTrades: parseThreshold(
+      process.env['SUBGRAPH_FRESH_FAT_BET_PRIOR_TRADES'],
       DEFAULT_THRESHOLDS.subgraphFreshFatBetPriorTrades,
-    subgraphFreshFatBetSizeUSD:
-      Number(process.env['SUBGRAPH_FRESH_FAT_BET_SIZE_USD']) ||
+      { min: 0, max: 1000 }
+    ),
+    subgraphFreshFatBetSizeUSD: parseThreshold(
+      process.env['SUBGRAPH_FRESH_FAT_BET_SIZE_USD'],
       DEFAULT_THRESHOLDS.subgraphFreshFatBetSizeUSD,
-    subgraphFreshFatBetMaxOI:
-      Number(process.env['SUBGRAPH_FRESH_FAT_BET_MAX_OI']) ||
+      { min: 0, max: 10000000 }
+    ),
+    subgraphFreshFatBetMaxOI: parseThreshold(
+      process.env['SUBGRAPH_FRESH_FAT_BET_MAX_OI'],
       DEFAULT_THRESHOLDS.subgraphFreshFatBetMaxOI,
-    subgraphCacheTTLHours:
-      Number(process.env['SUBGRAPH_CACHE_TTL_HOURS']) ||
+      { min: 0, max: 100000000 }
+    ),
+    subgraphCacheTTLHours: parseThreshold(
+      process.env['SUBGRAPH_CACHE_TTL_HOURS'],
       DEFAULT_THRESHOLDS.subgraphCacheTTLHours,
+      { min: 0, max: 720 } // max 30 days
+    ),
 
     // OI Calculation Method Configuration
     oiCalculationMethod: ['oi', 'liquidity', 'volume'].includes(
@@ -176,28 +251,40 @@ export function getThresholds(): DetectionThresholds {
     )
       ? (process.env['OI_CALCULATION_METHOD'] as 'oi' | 'liquidity' | 'volume')
       : DEFAULT_THRESHOLDS.oiCalculationMethod,
-    minLiquidityImpactPercentage:
-      Number(process.env['MIN_LIQUIDITY_IMPACT_PERCENTAGE']) ||
+    minLiquidityImpactPercentage: parseThreshold(
+      process.env['MIN_LIQUIDITY_IMPACT_PERCENTAGE'],
       DEFAULT_THRESHOLDS.minLiquidityImpactPercentage,
+      { min: 0, max: 100 }
+    ),
     fallbackToOiCalculation:
       process.env['FALLBACK_TO_OI_CALCULATION'] === 'true' ||
       (process.env['FALLBACK_TO_OI_CALCULATION'] !== 'false' &&
         DEFAULT_THRESHOLDS.fallbackToOiCalculation),
-    fallbackOiPercentage:
-      Number(process.env['FALLBACK_OI_PERCENTAGE']) ||
+    fallbackOiPercentage: parseThreshold(
+      process.env['FALLBACK_OI_PERCENTAGE'],
       DEFAULT_THRESHOLDS.fallbackOiPercentage,
-    minVolumeImpactPercentage:
-      Number(process.env['MIN_VOLUME_IMPACT_PERCENTAGE']) ||
+      { min: 0, max: 100 }
+    ),
+    minVolumeImpactPercentage: parseThreshold(
+      process.env['MIN_VOLUME_IMPACT_PERCENTAGE'],
       DEFAULT_THRESHOLDS.minVolumeImpactPercentage,
-    volumeLookbackHours:
-      Number(process.env['VOLUME_LOOKBACK_HOURS']) ||
+      { min: 0, max: 100 }
+    ),
+    volumeLookbackHours: parseThreshold(
+      process.env['VOLUME_LOOKBACK_HOURS'],
       DEFAULT_THRESHOLDS.volumeLookbackHours,
-    orderbookDepthLevels:
-      Number(process.env['ORDERBOOK_DEPTH_LEVELS']) ||
+      { min: 1, max: 720 }
+    ),
+    orderbookDepthLevels: parseThreshold(
+      process.env['ORDERBOOK_DEPTH_LEVELS'],
       DEFAULT_THRESHOLDS.orderbookDepthLevels,
-    orderbookCacheTtlSeconds:
-      Number(process.env['ORDERBOOK_CACHE_TTL_SECONDS']) ||
+      { min: 1, max: 100 }
+    ),
+    orderbookCacheTtlSeconds: parseThreshold(
+      process.env['ORDERBOOK_CACHE_TTL_SECONDS'],
       DEFAULT_THRESHOLDS.orderbookCacheTtlSeconds,
+      { min: 1, max: 3600 }
+    ),
 
     // Error handling
     skipTradesOnProxyError:
@@ -205,11 +292,15 @@ export function getThresholds(): DetectionThresholds {
       DEFAULT_THRESHOLDS.skipTradesOnProxyError,
 
     // Market-aware minimum thresholds
-    absoluteMinUsd:
-      Number(process.env['ABSOLUTE_MIN_USD']) ||
+    absoluteMinUsd: parseThreshold(
+      process.env['ABSOLUTE_MIN_USD'],
       DEFAULT_THRESHOLDS.absoluteMinUsd,
-    relativeLiquidityFactor:
-      Number(process.env['RELATIVE_LIQUIDITY_FACTOR']) ||
+      { min: 0, max: 10000000 }
+    ),
+    relativeLiquidityFactor: parseThreshold(
+      process.env['RELATIVE_LIQUIDITY_FACTOR'],
       DEFAULT_THRESHOLDS.relativeLiquidityFactor,
+      { min: 0, max: 1 }
+    ),
   };
 }

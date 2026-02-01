@@ -93,6 +93,10 @@ class TradeService {
       return;
     }
 
+    // Set isProcessing = true BEFORE creating the promise to prevent race condition
+    // where multiple calls see isProcessing === false and start multiple processors
+    this.isProcessing = true;
+
     this.processingPromise = this.processQueue().catch((error) => {
       logger.error(
         {
@@ -118,8 +122,11 @@ class TradeService {
    * Process trades from the queue sequentially with retry logic
    */
   private async processQueue(): Promise<void> {
-    if (this.isProcessing) return;
-    this.isProcessing = true;
+    // Note: isProcessing is already set to true by ensureProcessing() before this is called
+    // This check handles direct calls to processQueue() (e.g., from retryDeadLetterQueue)
+    if (!this.isProcessing) {
+      this.isProcessing = true;
+    }
 
     try {
       while (this.tradeQueue.length > 0) {
@@ -528,7 +535,9 @@ class TradeService {
           );
         }
       } catch (proxyError) {
-        logger.warn(
+        // CRITICAL: Proxy resolution failure means we'd analyze the wrong wallet
+        // which gives 100% false negatives. Skip this analysis entirely.
+        logger.error(
           {
             error:
               proxyError instanceof Error
@@ -536,10 +545,12 @@ class TradeService {
                 : String(proxyError),
             proxy: trade.taker.substring(0, 10) + '...',
             tradeId: trade.id,
+            marketId: trade.marketId,
+            tradeUsdValue: signal.tradeUsdValue.toFixed(2),
           },
-          '⚠️ Proxy resolution failed - using proxy address for analysis'
+          '🚨 Proxy resolution failed - SKIPPING analysis (would analyze wrong wallet)'
         );
-        // Continue with proxy address - better than skipping the trade
+        return; // Skip this trade's analysis - don't continue with proxy address
       }
 
       logger.info(

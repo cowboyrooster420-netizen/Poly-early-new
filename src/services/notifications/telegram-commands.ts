@@ -49,6 +49,10 @@ interface GammaEvent {
   markets: GammaMarket[];
 }
 
+// Rate limiting configuration
+const RATE_LIMIT_MAX_COMMANDS = 10;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+
 /**
  * Telegram command handler - listens for commands and responds
  */
@@ -63,6 +67,9 @@ class TelegramCommandHandler {
   private startupTimeout: NodeJS.Timeout | null = null;
   private consecutiveErrors = 0;
   private lastErrorLogTime = 0;
+
+  // Rate limiting: Map of chatId -> array of command timestamps
+  private rateLimitMap: Map<number, number[]> = new Map();
 
   private constructor() {
     this.botToken = env.TELEGRAM_BOT_TOKEN ?? null;
@@ -233,6 +240,34 @@ class TelegramCommandHandler {
   }
 
   /**
+   * Check if a user is rate limited
+   * Returns true if the user has exceeded the rate limit
+   */
+  private isRateLimited(chatId: number): boolean {
+    const now = Date.now();
+    const timestamps = this.rateLimitMap.get(chatId) || [];
+
+    // Filter out timestamps older than the rate limit window
+    const recentTimestamps = timestamps.filter(
+      (ts) => now - ts < RATE_LIMIT_WINDOW_MS
+    );
+
+    // Update the map with filtered timestamps
+    this.rateLimitMap.set(chatId, recentTimestamps);
+
+    // Check if rate limited
+    if (recentTimestamps.length >= RATE_LIMIT_MAX_COMMANDS) {
+      return true;
+    }
+
+    // Add current timestamp
+    recentTimestamps.push(now);
+    this.rateLimitMap.set(chatId, recentTimestamps);
+
+    return false;
+  }
+
+  /**
    * Handle an incoming update
    */
   private async handleUpdate(update: TelegramUpdate): Promise<void> {
@@ -245,6 +280,17 @@ class TelegramCommandHandler {
     // Only respond in the configured chat
     if (this.chatId && chatId.toString() !== this.chatId) {
       return;
+    }
+
+    // Check rate limiting before processing any command
+    if (text.startsWith('/')) {
+      if (this.isRateLimited(chatId)) {
+        await this.sendMessage(
+          chatId,
+          '⚠️ Rate limit exceeded. Please wait a minute before sending more commands.'
+        );
+        return;
+      }
     }
 
     // Parse command
@@ -291,6 +337,16 @@ class TelegramCommandHandler {
       await this.sendMessage(
         chatId,
         '❌ Usage: `/add <market-slug>`\nExample: `/add maduro-out-in-2025`'
+      );
+      return;
+    }
+
+    // Validate slug format: lowercase alphanumeric and hyphens only
+    const slugPattern = /^[a-z0-9-]+$/;
+    if (!slugPattern.test(slug)) {
+      await this.sendMessage(
+        chatId,
+        '❌ Invalid slug format.\n\nSlugs must contain only lowercase letters, numbers, and hyphens.\nExample: `maduro-out-in-2025`'
       );
       return;
     }

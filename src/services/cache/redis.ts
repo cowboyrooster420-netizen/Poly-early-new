@@ -11,6 +11,9 @@ class RedisService {
   private static instance: RedisService | null = null;
   private client: RedisClient | null = null;
   private isConnected = false;
+  private redisUrl: string | null = null;
+  private reconnectTimeoutId: NodeJS.Timeout | null = null;
+  private readonly RECONNECT_DELAY_MS = 5000; // 5 seconds
 
   private constructor() {
     // Private constructor for singleton
@@ -34,6 +37,9 @@ class RedisService {
       logger.debug('Redis already connected');
       return;
     }
+
+    // Store URL for reconnection attempts
+    this.redisUrl = redisUrl;
 
     try {
       logger.info({ redisUrl }, 'Connecting to Redis...');
@@ -62,6 +68,9 @@ class RedisService {
       this.client.on('error', (error: Error) => {
         logger.error({ error }, 'Redis error');
         this.isConnected = false;
+
+        // Attempt automatic reconnection after delay
+        this.scheduleReconnect();
       });
 
       this.client.on('close', () => {
@@ -89,6 +98,12 @@ class RedisService {
    * Disconnect from Redis
    */
   public async disconnect(): Promise<void> {
+    // Clear any pending reconnect attempt
+    if (this.reconnectTimeoutId !== null) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+
     if (this.client === null || !this.isConnected) {
       logger.debug('Redis not connected, skipping disconnect');
       return;
@@ -104,6 +119,53 @@ class RedisService {
       logger.error({ error }, 'Error disconnecting from Redis');
       throw error;
     }
+  }
+
+  /**
+   * Schedule automatic reconnection attempt
+   */
+  private scheduleReconnect(): void {
+    // Don't schedule if already pending or no URL stored
+    if (this.reconnectTimeoutId !== null || this.redisUrl === null) {
+      return;
+    }
+
+    logger.info(
+      { delayMs: this.RECONNECT_DELAY_MS },
+      'Scheduling Redis reconnection attempt'
+    );
+
+    this.reconnectTimeoutId = setTimeout(() => {
+      this.reconnectTimeoutId = null;
+
+      // Don't reconnect if already connected or no URL
+      if (this.isConnected || this.redisUrl === null) {
+        return;
+      }
+
+      logger.info('Attempting Redis reconnection...');
+
+      // Wrap async logic in IIFE with void
+      void (async (): Promise<void> => {
+        try {
+          // Clean up old client if exists
+          if (this.client !== null) {
+            try {
+              await this.client.quit();
+            } catch {
+              // Ignore errors during cleanup
+            }
+            this.client = null;
+          }
+          await this.connect(this.redisUrl!);
+          logger.info('Redis reconnection successful');
+        } catch (error) {
+          logger.error({ error }, 'Redis reconnection failed');
+          // Schedule another attempt
+          this.scheduleReconnect();
+        }
+      })();
+    }, this.RECONNECT_DELAY_MS);
   }
 
   /**

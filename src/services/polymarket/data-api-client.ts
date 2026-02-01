@@ -272,6 +272,8 @@ class PolymarketDataApiClient {
     // Batch condition IDs to avoid URL length limits
     // Each condition ID is ~66 chars, so 20 per batch keeps URL under 2KB
     const BATCH_SIZE = 20;
+    const MAX_CONCURRENT_BATCHES = 5;
+    const BATCH_TIMEOUT_MS = 5000;
     const batches: string[][] = [];
     for (let i = 0; i < conditionIds.length; i += BATCH_SIZE) {
       batches.push(conditionIds.slice(i, i + BATCH_SIZE));
@@ -282,13 +284,16 @@ class PolymarketDataApiClient {
         totalConditionIds: conditionIds.length,
         batchCount: batches.length,
         batchSize: BATCH_SIZE,
+        maxConcurrent: MAX_CONCURRENT_BATCHES,
       },
       'Fetching trades from Data API in batches'
     );
 
     try {
-      // Fetch all batches in parallel
-      const batchPromises = batches.map(async (batchConditionIds) => {
+      // Helper to fetch a single batch with timeout
+      const fetchBatchWithTimeout = async (
+        batchConditionIds: string[]
+      ): Promise<DataApiTrade[]> => {
         const params: Record<string, string | number | boolean> = {
           limit,
           takerOnly: true, // Only get real taker trades (not Exchange contract)
@@ -301,20 +306,47 @@ class PolymarketDataApiClient {
           params['filterAmount'] = minUsdValue;
         }
 
-        const response = await this.client.get<DataApiTrade[]>('/trades', {
-          params,
+        // Race between the actual request and a timeout
+        const timeoutPromise = new Promise<DataApiTrade[]>((_, reject) => {
+          setTimeout(
+            () => reject(new Error('Batch request timeout')),
+            BATCH_TIMEOUT_MS
+          );
         });
 
-        return response.data || [];
-      });
+        const fetchPromise = this.client
+          .get<DataApiTrade[]>('/trades', { params })
+          .then((response) => response.data || []);
 
-      const batchResults = await Promise.all(batchPromises);
+        try {
+          return await Promise.race([fetchPromise, timeoutPromise]);
+        } catch (error) {
+          logger.warn(
+            {
+              error: error instanceof Error ? error.message : String(error),
+              conditionIdsCount: batchConditionIds.length,
+            },
+            'Batch request failed or timed out, returning empty array'
+          );
+          return [];
+        }
+      };
+
+      // Process batches with limited concurrency
+      const allBatchResults: DataApiTrade[][] = [];
+      for (let i = 0; i < batches.length; i += MAX_CONCURRENT_BATCHES) {
+        const concurrentBatches = batches.slice(i, i + MAX_CONCURRENT_BATCHES);
+        const results = await Promise.all(
+          concurrentBatches.map(fetchBatchWithTimeout)
+        );
+        allBatchResults.push(...results);
+      }
 
       // Merge all results and deduplicate by transactionHash
       const seenTxHashes = new Set<string>();
       const allTrades: DataApiTrade[] = [];
 
-      for (const trades of batchResults) {
+      for (const trades of allBatchResults) {
         for (const trade of trades) {
           if (!seenTxHashes.has(trade.transactionHash)) {
             seenTxHashes.add(trade.transactionHash);

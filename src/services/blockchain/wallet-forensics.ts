@@ -84,9 +84,64 @@ class WalletForensicsService {
   >();
   private readonly RECENT_WALLET_TTL_MS = 15 * 60 * 1000; // 15 minutes (increased to reduce subgraph load)
   private readonly MAX_RECENT_WALLETS = 2000; // Increased to cache more wallets
+  private readonly CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  private cleanupIntervalId: NodeJS.Timeout | null = null;
 
   private constructor() {
     logger.info('Wallet forensics service initialized (Data API mode)');
+    // Start periodic cleanup for wallet cache
+    this.startPeriodicCleanup();
+  }
+
+  /**
+   * Start periodic cleanup interval for expired cache entries
+   */
+  private startPeriodicCleanup(): void {
+    if (this.cleanupIntervalId !== null) {
+      return; // Already running
+    }
+
+    this.cleanupIntervalId = setInterval(() => {
+      this.cleanupExpiredEntries();
+    }, this.CLEANUP_INTERVAL_MS);
+
+    logger.info(
+      { intervalMs: this.CLEANUP_INTERVAL_MS },
+      'Started periodic wallet cache cleanup'
+    );
+  }
+
+  /**
+   * Clean up expired entries from the in-memory wallet cache
+   */
+  private cleanupExpiredEntries(): void {
+    const now = Date.now();
+    let removedCount = 0;
+
+    for (const [addr, data] of this.recentWallets) {
+      if (now - data.timestamp > this.RECENT_WALLET_TTL_MS) {
+        this.recentWallets.delete(addr);
+        removedCount++;
+      }
+    }
+
+    if (removedCount > 0) {
+      logger.debug(
+        { removedCount, remainingCount: this.recentWallets.size },
+        'Cleaned up expired wallet cache entries'
+      );
+    }
+  }
+
+  /**
+   * Stop the periodic cleanup (for graceful shutdown)
+   */
+  public stopPeriodicCleanup(): void {
+    if (this.cleanupIntervalId !== null) {
+      clearInterval(this.cleanupIntervalId);
+      this.cleanupIntervalId = null;
+      logger.info('Stopped periodic wallet cache cleanup');
+    }
   }
 
   /**
@@ -109,6 +164,26 @@ class WalletForensicsService {
   ): Promise<WalletFingerprint> {
     const normalizedAddress = address.toLowerCase().trim();
 
+    // Validate Ethereum address format
+    const ethereumAddressRegex = /^0x[a-fA-F0-9]{40}$/;
+    if (!ethereumAddressRegex.test(normalizedAddress)) {
+      logger.warn(
+        { address, normalizedAddress },
+        'Invalid Ethereum address format provided'
+      );
+      return this.createErrorFingerprint(
+        normalizedAddress,
+        'Invalid Ethereum address format',
+        {
+          dataApi: false,
+          subgraph: false,
+          cache: false,
+          timestamp: Date.now(),
+        },
+        undefined
+      );
+    }
+
     // Check in-memory cache first (fastest, avoids Redis and subgraph)
     const recent = this.recentWallets.get(normalizedAddress);
     if (recent && Date.now() - recent.timestamp < this.RECENT_WALLET_TTL_MS) {
@@ -120,18 +195,24 @@ class WalletForensicsService {
     }
 
     // Use distributed lock to prevent concurrent analysis of same wallet
+    // Cache update is inside the lock to prevent race conditions
     const fingerprint = await withLock(
       `wallet-analysis:${normalizedAddress}`,
-      async () => this.analyzeWalletInternal(normalizedAddress, tradeContext),
+      async () => {
+        const result = await this.analyzeWalletInternal(
+          normalizedAddress,
+          tradeContext
+        );
+        // Update in-memory cache inside the lock to prevent race conditions
+        this.updateRecentWallets(normalizedAddress, result);
+        return result;
+      },
       {
         ttl: 60000, // 60 second lock
         maxRetries: 100, // Wait up to 10 seconds
         retryDelay: 100,
       }
     );
-
-    // Update in-memory cache
-    this.updateRecentWallets(normalizedAddress, fingerprint);
 
     return fingerprint;
   }
@@ -567,10 +648,10 @@ class WalletForensicsService {
         );
       }
 
-      // Determine if suspicious with lower confidence
+      // Determine if suspicious - consistent with analyzeWalletInternal (2+ flags)
       const suspiciousFlagCount =
         Object.values(subgraphFlags).filter(Boolean).length;
-      const isSuspicious = suspiciousFlagCount >= 3; // Higher threshold for partial data
+      const isSuspicious = suspiciousFlagCount >= 2;
 
       // Calculate confidence for partial data scenario
       const confidence = calculateConfidence(
@@ -724,7 +805,12 @@ class WalletForensicsService {
       freshFatBet: freshFatBet ?? false,
     };
 
-    const isSuspicious = freshFatBet ?? false; // New user is only suspicious if making large bet
+    // Use consistent logic: count flags >= 2 = suspicious
+    // New users have 4 true flags (lowTradeCount, youngAccount, lowVolume, highConcentration)
+    // so they are always suspicious, plus freshFatBet if applicable
+    const suspiciousFlagCount =
+      Object.values(subgraphFlags).filter(Boolean).length;
+    const isSuspicious = suspiciousFlagCount >= 2;
 
     return {
       address,

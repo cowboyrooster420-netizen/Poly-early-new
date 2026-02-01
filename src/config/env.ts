@@ -40,6 +40,9 @@ const envSchema = z.object({
 
   // Monitoring
   SENTRY_DSN: z.string().url().optional(),
+
+  // API Security
+  API_SECRET_TOKEN: z.string().min(32).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

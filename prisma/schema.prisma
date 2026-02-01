@@ -242,6 +242,10 @@ model Alert {
   @@index([timestamp])
   @@index([classification])
   @@index([dismissed])
+  // Composite indexes for common query patterns
+  @@index([timestamp, dismissed])
+  @@index([walletAddress, timestamp])
+  @@index([classification, dismissed])
   @@map("alerts")
 }
 

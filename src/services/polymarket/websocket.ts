@@ -65,6 +65,7 @@ class PolymarketWebSocketService {
   private pongTimeout: NodeJS.Timeout | null = null;
   private subscribedMarkets: Set<string> = new Set();
   private tradeHandlers: Array<(trade: PolymarketTrade) => void> = [];
+  private static readonly MAX_TRADE_HANDLERS = 100;
 
   private constructor() {
     // Private constructor for singleton
@@ -229,9 +230,34 @@ class PolymarketWebSocketService {
 
   /**
    * Register a handler for trade events
+   * Prevents duplicate handlers and enforces max handler limit
    */
   public onTrade(handler: (trade: PolymarketTrade) => void): void {
+    // Check for duplicate handler to prevent memory leak
+    if (this.tradeHandlers.includes(handler)) {
+      logger.warn('Attempted to add duplicate trade handler, ignoring');
+      return;
+    }
+
+    // Enforce max handlers limit to prevent memory leak
+    if (
+      this.tradeHandlers.length >= PolymarketWebSocketService.MAX_TRADE_HANDLERS
+    ) {
+      logger.error(
+        {
+          currentCount: this.tradeHandlers.length,
+          max: PolymarketWebSocketService.MAX_TRADE_HANDLERS,
+        },
+        'Max trade handlers limit reached, rejecting new handler'
+      );
+      throw new Error('Max trade handlers limit reached');
+    }
+
     this.tradeHandlers.push(handler);
+    logger.debug(
+      { handlerCount: this.tradeHandlers.length },
+      'Trade handler registered'
+    );
   }
 
   /**

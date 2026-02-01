@@ -138,69 +138,23 @@ class AlertScorerService {
     // 0. CHECK FINGERPRINT STATUS
     // ----------------------------------
     if ('status' in walletFingerprint && walletFingerprint.status === 'error') {
-      // API failed but wallet is marked suspicious - give it a medium score
+      // Wallet analysis failed - we have no reliable data about this wallet
+      // Don't give automatic suspicious score as that causes false positives
+      // Return early with IGNORE result - skip this trade's scoring entirely
       logger.warn(
         {
           wallet: walletFingerprint.address,
           reason: walletFingerprint.errorReason,
+          tradeId: tradeSignal.walletAddress,
+          marketId: tradeSignal.marketId,
         },
-        'Wallet analysis failed - treating as suspicious'
+        'Wallet analysis failed - skipping scoring (no reliable wallet data)'
       );
-      await this.incrementStat('wallet_error_but_suspicious');
+      await this.incrementStat('wallet_error_skipped');
 
-      // Give error fingerprints a baseline suspicious score
-      const errorWalletScore = 30; // 60% of max 50 points
-      const walletScore100 = errorWalletScore * 2; // Scale to 0-100
-
-      // Continue with reduced confidence scoring
-      const impactPercentage = tradeSignal.impactPercentage;
-      const impactMethod = tradeSignal.impactMethod;
-      const impactThreshold = tradeSignal.impactThreshold;
-
-      let impactScore = this.calculateImpactScore(
-        impactPercentage,
-        impactMethod,
-        impactThreshold
+      return this.createIgnoreResult(
+        `Wallet analysis failed: ${walletFingerprint.errorReason || 'unknown error'}`
       );
-
-      // Apply standard multipliers and scoring
-      const marketSizeMultiplier = this.getMarketSizeMultiplier(openInterest);
-      const dormancyMultiplier = await this.getDormancyMultiplier(
-        tradeSignal.marketId,
-        tradeSignal.timestamp
-      );
-
-      impactScore = impactScore * marketSizeMultiplier * dormancyMultiplier;
-      impactScore = Math.min(100, impactScore);
-
-      const walletContribution = 0.6 * walletScore100;
-      const impactContribution = 0.4 * impactScore;
-      const finalScore = walletContribution + impactContribution;
-
-      const classification = this.classify(finalScore);
-
-      await this.incrementStat(
-        `classification_${classification.toLowerCase()}`
-      );
-
-      return {
-        totalScore: Math.round(finalScore),
-        breakdown: {
-          walletScore: Math.round(walletScore100),
-          impactScore: Math.round(impactScore),
-          impactMethod,
-          impactPercentage,
-          walletContribution: Math.round(walletContribution),
-          impactContribution: Math.round(impactContribution),
-        },
-        multipliers: {
-          marketSize: marketSizeMultiplier,
-          dormancy: dormancyMultiplier,
-        },
-        classification,
-        filtersPassed: true,
-        filterReason: 'Wallet API error - scored with caution',
-      };
     }
 
     // ----------------------------------
@@ -538,13 +492,14 @@ class AlertScorerService {
       const lastTradeStr = await redis.get(lastTradeKey);
 
       if (lastTradeStr === null) {
-        // No record = first trade we're seeing in this market = treat as dormant
-        // This gives the 2.0x boost for first suspicious activity in a market
+        // No record = first trade we're seeing in this market
+        // Return neutral 1.0 - we don't know if market is dormant or just new to us
+        // Giving 2.0x boost to any new market we start monitoring would cause false positives
         logger.debug(
           { marketId },
-          'No prior trade record - treating as dormant market (2.0x boost)'
+          'No prior trade record - using neutral multiplier (1.0x)'
         );
-        return 2.0;
+        return 1.0;
       }
 
       const lastTradeTime = parseInt(lastTradeStr, 10);

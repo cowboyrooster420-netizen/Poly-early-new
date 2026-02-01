@@ -293,10 +293,11 @@ async function main(): Promise<void> {
     );
 
     // Try to send Telegram notification before dying
+    // Note: Only send error message, not stack trace (security best practice)
     if (telegramNotifier.isConfigured()) {
       telegramNotifier
         .sendMessage(
-          `💀 BOT CRASHED!\n\nError: ${error.message}\n\nStack: ${error.stack?.slice(0, 500) || 'N/A'}`
+          `💀 BOT CRASHED!\n\nError: ${error.name}: ${error.message}\n\nCheck server logs for details.`
         )
         .catch((notifError) => {
           logger.error(
@@ -318,6 +319,8 @@ async function main(): Promise<void> {
     const errorMessage =
       reason instanceof Error ? reason.message : String(reason);
     const errorStack = reason instanceof Error ? reason.stack : 'N/A';
+    const errorName =
+      reason instanceof Error ? reason.name : 'UnhandledRejection';
 
     logger.fatal(
       {
@@ -329,10 +332,11 @@ async function main(): Promise<void> {
     );
 
     // Try to send Telegram notification before dying
+    // Note: Only send error message, not stack trace (security best practice)
     if (telegramNotifier.isConfigured()) {
       telegramNotifier
         .sendMessage(
-          `💀 BOT CRASHED!\n\nUnhandled Rejection: ${errorMessage}\n\nStack: ${String(errorStack).slice(0, 500)}`
+          `💀 BOT CRASHED!\n\nUnhandled Rejection: ${errorName}: ${errorMessage}\n\nCheck server logs for details.`
         )
         .catch((notifError) => {
           logger.error(
