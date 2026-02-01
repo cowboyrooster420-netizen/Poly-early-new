@@ -408,6 +408,20 @@ class TradeService {
     try {
       const prisma = db.getClient();
 
+      // Check if market exists before storing (avoid FK constraint violation)
+      const marketExists = await prisma.market.findUnique({
+        where: { id: trade.marketId },
+        select: { id: true },
+      });
+
+      if (!marketExists) {
+        logger.debug(
+          { tradeId: trade.id, marketId: trade.marketId },
+          'Skipping trade storage - market not in database'
+        );
+        return;
+      }
+
       // Use upsert to silently handle duplicates without throwing
       await prisma.trade.upsert({
         where: { id: trade.id },
