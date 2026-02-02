@@ -139,7 +139,7 @@ class DiscordNotifierService {
         },
         {
           name: 'Wallet Flags',
-          value: this.formatWalletFlags(alert.walletFingerprint.flags),
+          value: this.formatWalletFlags(alert.walletFingerprint.subgraphFlags),
           inline: false,
         },
       ],
@@ -152,21 +152,23 @@ class DiscordNotifierService {
   }
 
   /**
-   * Format wallet flags for display
+   * Format wallet flags for display (using Data API flags)
    */
   private formatWalletFlags(flags: {
-    lowTxCount: boolean;
-    youngWallet: boolean;
-    highPolymarketNetflow: boolean;
-    singlePurpose: boolean;
-    cexFunded: boolean;
+    lowTradeCount: boolean;
+    youngAccount: boolean;
+    lowVolume: boolean;
+    highConcentration: boolean;
+    freshFatBet: boolean;
+    lowDiversification: boolean;
   }): string {
     const flagList: string[] = [];
-    if (flags.lowTxCount) flagList.push('Low TX Count');
-    if (flags.youngWallet) flagList.push('Young Wallet');
-    if (flags.highPolymarketNetflow) flagList.push('High Polymarket Netflow');
-    if (flags.singlePurpose) flagList.push('Single Purpose');
-    if (flags.cexFunded) flagList.push('CEX Funded');
+    if (flags.lowTradeCount) flagList.push('📉 Low Trade Count');
+    if (flags.youngAccount) flagList.push('🆕 Young Account');
+    if (flags.lowVolume) flagList.push('💵 Low Volume');
+    if (flags.highConcentration) flagList.push('🎲 High Concentration');
+    if (flags.freshFatBet) flagList.push('💰 Fresh Fat Bet');
+    if (flags.lowDiversification) flagList.push('🎯 Low Diversification');
 
     return flagList.length > 0 ? flagList.join(', ') : 'None';
   }

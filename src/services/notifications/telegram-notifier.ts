@@ -204,36 +204,38 @@ class TelegramNotifierService {
     message += `• PM Trades: ${alert.walletFingerprint.subgraphMetadata.polymarketTradeCount} total\n`;
     message += `• PM Volume: $${alert.walletFingerprint.subgraphMetadata.polymarketVolumeUSD.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} lifetime\n`;
 
-    // Position concentration
+    // Position concentration (value is already 0-100 percentage)
     const concentration =
       alert.walletFingerprint.subgraphMetadata.maxPositionConcentration;
     if (concentration > 0) {
-      message += `• Concentration: ${(concentration * 100).toFixed(0)}% in top market\n`;
+      message += `• Concentration: ${concentration.toFixed(0)}% in top market\n`;
     }
 
-    message += `• CEX Funded: ${alert.walletFingerprint.flags.cexFunded ? '✅ Yes' : '❌ No'}\n`;
-
-    if (alert.walletFingerprint.metadata.cexFundingSource !== null) {
-      message += `• Funding Source: ${alert.walletFingerprint.metadata.cexFundingSource.toUpperCase()}\n`;
+    // Markets traded (diversification)
+    const marketsTraded =
+      alert.walletFingerprint.subgraphMetadata.marketsTraded ?? 0;
+    if (marketsTraded > 0) {
+      message += `• Markets Traded: ${marketsTraded}\n`;
     }
 
-    // Suspicious flags
-    if (alert.walletFingerprint.isSuspicious) {
+    // Suspicious flags (using wallet flags from Data API)
+    const walletFlags = alert.walletFingerprint.subgraphFlags;
+    const hasFlags =
+      walletFlags.lowTradeCount ||
+      walletFlags.youngAccount ||
+      walletFlags.freshFatBet ||
+      walletFlags.highConcentration ||
+      walletFlags.lowDiversification;
+
+    if (hasFlags) {
       message += `\n🚩 *Suspicious Flags:*\n`;
-      if (alert.walletFingerprint.flags.cexFunded)
-        message += `• 🏦 CEX-funded\n`;
-      if (alert.walletFingerprint.flags.lowTxCount)
-        message += `• 📉 Low transactions\n`;
-      if (alert.walletFingerprint.flags.youngWallet)
-        message += `• 🆕 Young wallet\n`;
-      if (alert.walletFingerprint.flags.highPolymarketNetflow)
-        message += `• 🎯 High PM netflow\n`;
-      if (alert.walletFingerprint.flags.singlePurpose)
-        message += `• 🔒 Single-purpose\n`;
-      if (alert.walletFingerprint.subgraphFlags.freshFatBet)
-        message += `• 💰 Fresh fat bet pattern\n`;
-      if (alert.walletFingerprint.subgraphFlags.highConcentration)
-        message += `• 🎲 High concentration\n`;
+      if (walletFlags.lowTradeCount) message += `• 📉 Low trade count\n`;
+      if (walletFlags.youngAccount) message += `• 🆕 Young account\n`;
+      if (walletFlags.lowVolume) message += `• 💵 Low volume\n`;
+      if (walletFlags.freshFatBet) message += `• 💰 Fresh fat bet pattern\n`;
+      if (walletFlags.highConcentration) message += `• 🎲 High concentration\n`;
+      if (walletFlags.lowDiversification)
+        message += `• 🎯 Low diversification (insider signal)\n`;
     }
 
     // Data source indicator

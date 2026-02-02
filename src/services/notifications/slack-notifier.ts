@@ -223,49 +223,43 @@ class SlackNotifierService {
           },
           {
             type: 'mrkdwn',
-            text: `*Age:*\n${alert.walletFingerprint.metadata.walletAgeDays} days`,
+            text: `*Account Age:*\n${alert.walletFingerprint.subgraphMetadata.polymarketAccountAgeDays ?? 0} days`,
           },
           {
             type: 'mrkdwn',
-            text: `*Tx Count:*\n${alert.walletFingerprint.metadata.totalTransactions}`,
+            text: `*PM Trades:*\n${alert.walletFingerprint.subgraphMetadata.polymarketTradeCount}`,
           },
           {
             type: 'mrkdwn',
-            text: `*CEX Funded:*\n${alert.walletFingerprint.flags.cexFunded ? '✅ Yes' : '❌ No'}`,
+            text: `*Markets Traded:*\n${alert.walletFingerprint.subgraphMetadata.marketsTraded ?? 0}`,
           },
         ],
       },
     ];
 
-    // Add wallet flags if suspicious
-    if (alert.walletFingerprint.isSuspicious) {
+    // Add wallet flags if suspicious (using Data API flags)
+    const walletFlags = alert.walletFingerprint.subgraphFlags;
+    const hasFlags =
+      walletFlags.lowTradeCount ||
+      walletFlags.youngAccount ||
+      walletFlags.freshFatBet ||
+      walletFlags.highConcentration ||
+      walletFlags.lowDiversification;
+
+    if (hasFlags) {
       const flags: string[] = [];
-      if (alert.walletFingerprint.flags.cexFunded) flags.push('🏦 CEX-funded');
-      if (alert.walletFingerprint.flags.lowTxCount)
-        flags.push('📉 Low transactions');
-      if (alert.walletFingerprint.flags.youngWallet)
-        flags.push('🆕 Young wallet');
-      if (alert.walletFingerprint.flags.highPolymarketNetflow)
-        flags.push('🎯 High PM netflow');
-      if (alert.walletFingerprint.flags.singlePurpose)
-        flags.push('🔒 Single-purpose');
+      if (walletFlags.lowTradeCount) flags.push('📉 Low trade count');
+      if (walletFlags.youngAccount) flags.push('🆕 Young account');
+      if (walletFlags.lowVolume) flags.push('💵 Low volume');
+      if (walletFlags.freshFatBet) flags.push('💰 Fresh fat bet');
+      if (walletFlags.highConcentration) flags.push('🎲 High concentration');
+      if (walletFlags.lowDiversification) flags.push('🎯 Low diversification');
 
       blocks.push({
         type: 'section',
         text: {
           type: 'mrkdwn',
           text: `*🚩 Suspicious Flags:*\n${flags.join('\n')}`,
-        },
-      });
-    }
-
-    // Add CEX funding source if available
-    if (alert.walletFingerprint.metadata.cexFundingSource !== null) {
-      blocks.push({
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `*💰 Funding Source:*\n${alert.walletFingerprint.metadata.cexFundingSource.toUpperCase()}`,
         },
       });
     }
