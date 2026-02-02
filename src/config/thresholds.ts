@@ -68,15 +68,20 @@ export interface DetectionThresholds {
   minNetflowPercentage: number; // Min % of netflow to Polymarket (default: 85)
   cexFundingWindowDays: number; // Days to look back for CEX funding (default: 14)
 
-  // Subgraph-based wallet thresholds (new)
-  subgraphLowTradeCount: number; // Max trades to flag as low activity (default: 10)
-  subgraphYoungAccountDays: number; // Max age in days to flag as young (default: 30)
-  subgraphLowVolumeUSD: number; // Max lifetime volume to flag as low (default: 50000)
-  subgraphHighConcentrationPct: number; // Min % in one market to flag as concentrated (default: 70)
-  subgraphFreshFatBetPriorTrades: number; // Max prior trades for fresh+fat pattern (default: 2)
-  subgraphFreshFatBetSizeUSD: number; // Min trade size for fresh+fat pattern (default: 20000)
-  subgraphFreshFatBetMaxOI: number; // Max market OI for fresh+fat pattern (default: 500000)
-  subgraphCacheTTLHours: number; // Cache TTL for subgraph data (default: 48)
+  // Wallet analysis thresholds (Data API based)
+  // Note: Legacy names (subgraph*) still supported via env vars for backwards compatibility
+  walletLowTradeCount: number; // Max trades to flag as low activity (default: 5)
+  walletYoungAccountDays: number; // Max age in days to flag as young (default: 14)
+  walletLowVolumeUSD: number; // Max lifetime volume to flag as low (default: 10000)
+  walletHighConcentrationPct: number; // Min % in one market to flag as concentrated (default: 60)
+  walletFreshFatBetPriorTrades: number; // Max prior trades for fresh+fat pattern (default: 3)
+  walletFreshFatBetSizeUSD: number; // Min trade size for fresh+fat pattern (default: 10000)
+  walletFreshFatBetMaxOI: number; // Max market OI for fresh+fat pattern (default: 500000)
+  walletCacheTTLHours: number; // Cache TTL for wallet data (default: 48)
+
+  // Diversification thresholds (insider vs whale detection)
+  walletDiversificationThreshold: number; // Max markets to flag as low diversification (insider signal) (default: 3)
+  walletWhaleDiversificationMin: number; // Min markets for whale exemption (default: 10)
 
   // Error handling configuration
   skipTradesOnProxyError: boolean; // Skip trades when proxy resolution fails with GraphQL errors (default: false)
@@ -120,15 +125,19 @@ export const DEFAULT_THRESHOLDS: DetectionThresholds = {
   minNetflowPercentage: 85,
   cexFundingWindowDays: 14,
 
-  // Subgraph-based wallet thresholds
-  subgraphLowTradeCount: 5, // Reduced from 10 - more sensitive to new traders
-  subgraphYoungAccountDays: 14, // Reduced from 30 - catch newer accounts
-  subgraphLowVolumeUSD: 10000, // Reduced from 50000 - flag smaller traders
-  subgraphHighConcentrationPct: 60, // Reduced from 70 - catch more concentrated bets
-  subgraphFreshFatBetPriorTrades: 3, // Increased from 2 - slightly more permissive
-  subgraphFreshFatBetSizeUSD: 10000, // Reduced from 20000 - catch medium-sized insider trades
-  subgraphFreshFatBetMaxOI: 500000,
-  subgraphCacheTTLHours: 48,
+  // Wallet analysis thresholds
+  walletLowTradeCount: 5, // Reduced from 10 - more sensitive to new traders
+  walletYoungAccountDays: 14, // Reduced from 30 - catch newer accounts
+  walletLowVolumeUSD: 10000, // Reduced from 50000 - flag smaller traders
+  walletHighConcentrationPct: 60, // Reduced from 70 - catch more concentrated bets
+  walletFreshFatBetPriorTrades: 3, // Increased from 2 - slightly more permissive
+  walletFreshFatBetSizeUSD: 10000, // Reduced from 20000 - catch medium-sized insider trades
+  walletFreshFatBetMaxOI: 500000,
+  walletCacheTTLHours: 48,
+
+  // Diversification thresholds (insider vs whale)
+  walletDiversificationThreshold: 3, // <= 3 markets = low diversification = insider signal
+  walletWhaleDiversificationMin: 10, // >= 10 markets = likely whale, not insider
 
   // Error handling
   skipTradesOnProxyError: false,
@@ -203,46 +212,66 @@ export function getThresholds(): DetectionThresholds {
       DEFAULT_THRESHOLDS.cexFundingWindowDays,
       { min: 0, max: 365 }
     ),
-    // Subgraph-based thresholds
-    subgraphLowTradeCount: parseThreshold(
-      process.env['SUBGRAPH_LOW_TRADE_COUNT'],
-      DEFAULT_THRESHOLDS.subgraphLowTradeCount,
+    // Wallet analysis thresholds (supports both WALLET_* and legacy SUBGRAPH_* env vars)
+    walletLowTradeCount: parseThreshold(
+      process.env['WALLET_LOW_TRADE_COUNT'] ??
+        process.env['SUBGRAPH_LOW_TRADE_COUNT'],
+      DEFAULT_THRESHOLDS.walletLowTradeCount,
       { min: 0, max: 10000 }
     ),
-    subgraphYoungAccountDays: parseThreshold(
-      process.env['SUBGRAPH_YOUNG_ACCOUNT_DAYS'],
-      DEFAULT_THRESHOLDS.subgraphYoungAccountDays,
+    walletYoungAccountDays: parseThreshold(
+      process.env['WALLET_YOUNG_ACCOUNT_DAYS'] ??
+        process.env['SUBGRAPH_YOUNG_ACCOUNT_DAYS'],
+      DEFAULT_THRESHOLDS.walletYoungAccountDays,
       { min: 0, max: 365 }
     ),
-    subgraphLowVolumeUSD: parseThreshold(
-      process.env['SUBGRAPH_LOW_VOLUME_USD'],
-      DEFAULT_THRESHOLDS.subgraphLowVolumeUSD,
+    walletLowVolumeUSD: parseThreshold(
+      process.env['WALLET_LOW_VOLUME_USD'] ??
+        process.env['SUBGRAPH_LOW_VOLUME_USD'],
+      DEFAULT_THRESHOLDS.walletLowVolumeUSD,
       { min: 0, max: 100000000 } // max $100M
     ),
-    subgraphHighConcentrationPct: parseThreshold(
-      process.env['SUBGRAPH_HIGH_CONCENTRATION_PCT'],
-      DEFAULT_THRESHOLDS.subgraphHighConcentrationPct,
+    walletHighConcentrationPct: parseThreshold(
+      process.env['WALLET_HIGH_CONCENTRATION_PCT'] ??
+        process.env['SUBGRAPH_HIGH_CONCENTRATION_PCT'],
+      DEFAULT_THRESHOLDS.walletHighConcentrationPct,
       { min: 0, max: 100 }
     ),
-    subgraphFreshFatBetPriorTrades: parseThreshold(
-      process.env['SUBGRAPH_FRESH_FAT_BET_PRIOR_TRADES'],
-      DEFAULT_THRESHOLDS.subgraphFreshFatBetPriorTrades,
+    walletFreshFatBetPriorTrades: parseThreshold(
+      process.env['WALLET_FRESH_FAT_BET_PRIOR_TRADES'] ??
+        process.env['SUBGRAPH_FRESH_FAT_BET_PRIOR_TRADES'],
+      DEFAULT_THRESHOLDS.walletFreshFatBetPriorTrades,
       { min: 0, max: 1000 }
     ),
-    subgraphFreshFatBetSizeUSD: parseThreshold(
-      process.env['SUBGRAPH_FRESH_FAT_BET_SIZE_USD'],
-      DEFAULT_THRESHOLDS.subgraphFreshFatBetSizeUSD,
+    walletFreshFatBetSizeUSD: parseThreshold(
+      process.env['WALLET_FRESH_FAT_BET_SIZE_USD'] ??
+        process.env['SUBGRAPH_FRESH_FAT_BET_SIZE_USD'],
+      DEFAULT_THRESHOLDS.walletFreshFatBetSizeUSD,
       { min: 0, max: 10000000 }
     ),
-    subgraphFreshFatBetMaxOI: parseThreshold(
-      process.env['SUBGRAPH_FRESH_FAT_BET_MAX_OI'],
-      DEFAULT_THRESHOLDS.subgraphFreshFatBetMaxOI,
+    walletFreshFatBetMaxOI: parseThreshold(
+      process.env['WALLET_FRESH_FAT_BET_MAX_OI'] ??
+        process.env['SUBGRAPH_FRESH_FAT_BET_MAX_OI'],
+      DEFAULT_THRESHOLDS.walletFreshFatBetMaxOI,
       { min: 0, max: 100000000 }
     ),
-    subgraphCacheTTLHours: parseThreshold(
-      process.env['SUBGRAPH_CACHE_TTL_HOURS'],
-      DEFAULT_THRESHOLDS.subgraphCacheTTLHours,
+    walletCacheTTLHours: parseThreshold(
+      process.env['WALLET_CACHE_TTL_HOURS'] ??
+        process.env['SUBGRAPH_CACHE_TTL_HOURS'],
+      DEFAULT_THRESHOLDS.walletCacheTTLHours,
       { min: 0, max: 720 } // max 30 days
+    ),
+
+    // Diversification thresholds
+    walletDiversificationThreshold: parseThreshold(
+      process.env['WALLET_DIVERSIFICATION_THRESHOLD'],
+      DEFAULT_THRESHOLDS.walletDiversificationThreshold,
+      { min: 1, max: 100 }
+    ),
+    walletWhaleDiversificationMin: parseThreshold(
+      process.env['WALLET_WHALE_DIVERSIFICATION_MIN'],
+      DEFAULT_THRESHOLDS.walletWhaleDiversificationMin,
+      { min: 1, max: 1000 }
     ),
 
     // OI Calculation Method Configuration

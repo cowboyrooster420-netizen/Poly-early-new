@@ -446,35 +446,83 @@ class AlertScorerService {
   }
 
   /**
-   * Calculate wallet score from subgraph flags (0-50 scale)
+   * Calculate wallet score from wallet flags (0-50 scale)
+   *
+   * Scoring philosophy:
+   * - INSIDER signals (high weight): concentrated bets, low diversification, fresh fat bets
+   * - WHALE signals (low weight): just being new/low volume (whales can be new to Polymarket)
+   *
+   * Key insight: Insiders bet on ONE thing they know. Whales diversify.
    */
   private calculateWalletScore(wallet: WalletFingerprint): number {
     let score = 0;
     const flags = wallet.subgraphFlags;
 
-    // Low trade count on Polymarket (14 points)
+    // ============================================
+    // REDUCED WEIGHT - These catch whales too
+    // ============================================
+
+    // Low trade count on Polymarket (6 points, was 14)
+    // A whale new to Polymarket will also have low trade count
     if (flags.lowTradeCount) {
-      score += 14;
+      score += 6;
     }
 
-    // Young account on Polymarket (12 points)
+    // Young account on Polymarket (6 points, was 12)
+    // A whale new to Polymarket will also have young account
     if (flags.youngAccount) {
-      score += 12;
+      score += 6;
     }
 
-    // High concentration in one market (12 points)
-    if (flags.highConcentration) {
-      score += 12;
-    }
-
-    // Low volume trader (6 points)
+    // Low volume trader (4 points, was 6)
+    // Less meaningful on its own
     if (flags.lowVolume) {
-      score += 6;
+      score += 4;
     }
 
-    // Fresh fat bet pattern (6 points)
+    // ============================================
+    // INCREASED WEIGHT - Strong insider signals
+    // ============================================
+
+    // High concentration in one market (15 points, was 12)
+    // Insiders bet big on what they know
+    if (flags.highConcentration) {
+      score += 15;
+    }
+
+    // Fresh fat bet pattern (12 points, was 6)
+    // New account making large bet = classic insider move
     if (flags.freshFatBet) {
-      score += 6;
+      score += 12;
+    }
+
+    // Low diversification - only trades 1-3 markets (12 points, NEW)
+    // KEY DIFFERENTIATOR: Insiders bet on ONE thing, whales diversify
+    if (flags.lowDiversification) {
+      score += 12;
+    }
+
+    // ============================================
+    // WHALE EXEMPTION
+    // ============================================
+    // If fresh wallet BUT high diversification (10+ markets),
+    // this looks like a whale exploring Polymarket, not an insider
+    const marketsTraded = wallet.subgraphMetadata.marketsTraded ?? 0;
+    const whaleDiversificationMin = 10; // From thresholds
+
+    if (marketsTraded >= whaleDiversificationMin && flags.youngAccount) {
+      // Whale pattern: new to Polymarket but trading many markets
+      const originalScore = score;
+      score = Math.floor(score * 0.5); // Halve the score
+      logger.info(
+        {
+          wallet: wallet.address.slice(0, 10) + '...',
+          marketsTraded,
+          originalScore,
+          reducedScore: score,
+        },
+        '🐋 Whale pattern: fresh account but diversified - reducing suspicion'
+      );
     }
 
     return Math.min(50, score);

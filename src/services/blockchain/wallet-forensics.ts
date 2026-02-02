@@ -13,16 +13,20 @@ import { withLock } from '../../utils/distributed-lock.js';
 const thresholds = getThresholds();
 
 /**
- * Subgraph-based flags for wallet analysis
- * These are derived from Polymarket's official subgraph data
+ * Wallet analysis flags for insider detection
+ * Derived from Polymarket Data API
  */
-export interface SubgraphFlags {
+export interface WalletFlags {
   lowTradeCount: boolean; // Few trades on Polymarket
   youngAccount: boolean; // Recently started trading
   lowVolume: boolean; // Low lifetime volume
   highConcentration: boolean; // Most value in one market
   freshFatBet: boolean; // New wallet + large bet pattern
+  lowDiversification: boolean; // Trades only 1-3 markets (insider signal)
 }
+
+// Keep old name as alias for backwards compatibility
+export type SubgraphFlags = WalletFlags;
 
 /**
  * Wallet fingerprint analysis result (simplified for subgraph-only)
@@ -31,14 +35,19 @@ export interface WalletFingerprint {
   address: string;
   status: FingerprintStatus;
   isSuspicious: boolean;
-  subgraphFlags: SubgraphFlags;
-  subgraphMetadata: {
+  walletFlags: WalletFlags;
+  // Alias for backwards compatibility
+  subgraphFlags: WalletFlags;
+  walletMetadata: {
     polymarketTradeCount: number;
     polymarketVolumeUSD: number;
     polymarketAccountAgeDays: number | null;
     maxPositionConcentration: number;
+    marketsTraded: number; // Distinct markets traded (for diversification check)
     dataSource: 'subgraph' | 'data-api' | 'mixed' | 'cache';
   };
+  // Alias for backwards compatibility
+  subgraphMetadata: WalletFingerprint['walletMetadata'];
   analyzedAt: Date;
 
   // Error tracking
@@ -74,7 +83,7 @@ export interface WalletFingerprint {
 class WalletForensicsService {
   private static instance: WalletForensicsService | null = null;
   private readonly SUBGRAPH_CACHE_TTL_SECONDS =
-    thresholds.subgraphCacheTTLHours * 3600;
+    thresholds.walletCacheTTLHours * 3600;
 
   // In-memory cache for recently analyzed wallets (faster than Redis)
   // Key: address, Value: { fingerprint, timestamp }
@@ -335,7 +344,7 @@ class WalletForensicsService {
         );
       }
 
-      // Calculate position concentration from recent trades
+      // Calculate position concentration and diversification from recent trades
       const marketCounts = new Map<string, number>();
       for (const trade of dataApiData.recentTrades) {
         const count = marketCounts.get(trade.conditionId) || 0;
@@ -346,18 +355,22 @@ class WalletForensicsService {
       const maxPositionConcentration =
         totalTrades > 0 ? (maxMarketTrades / totalTrades) * 100 : 0;
 
+      // Count distinct markets for diversification check
+      const marketsTraded = marketCounts.size;
+
       // Calculate flags using Data API data
-      const subgraphFlags = this.calculateFlagsFromDataApi(
+      const walletFlags = this.calculateFlagsFromDataApi(
         tradeCount,
         volumeUSD,
         accountAgeDays,
         maxPositionConcentration,
+        marketsTraded,
         tradeContext
       );
 
-      // Determine if suspicious
+      // Determine if suspicious (2+ flags = suspicious)
       const suspiciousFlagCount =
-        Object.values(subgraphFlags).filter(Boolean).length;
+        Object.values(walletFlags).filter(Boolean).length;
       const isSuspicious = suspiciousFlagCount >= 2;
 
       // Create SubgraphWalletData-like structure for confidence calculation
@@ -393,28 +406,33 @@ class WalletForensicsService {
         errors.length > 0 ? errors : undefined
       );
 
+      const metadata = {
+        polymarketTradeCount: tradeCount,
+        polymarketVolumeUSD: volumeUSD,
+        polymarketAccountAgeDays: accountAgeDays,
+        maxPositionConcentration,
+        marketsTraded,
+        dataSource: 'data-api' as const,
+      };
+
       const fingerprint: WalletFingerprint = {
         address: normalizedAddress,
         status: 'success' as FingerprintStatus,
         isSuspicious,
         dataCompleteness,
         confidenceLevel: confidence.level,
-        subgraphFlags,
-        subgraphMetadata: {
-          polymarketTradeCount: tradeCount,
-          polymarketVolumeUSD: volumeUSD,
-          polymarketAccountAgeDays: accountAgeDays,
-          maxPositionConcentration,
-          dataSource: 'data-api',
-        },
+        walletFlags,
+        subgraphFlags: walletFlags, // Backwards compatibility alias
+        walletMetadata: metadata,
+        subgraphMetadata: metadata, // Backwards compatibility alias
         analyzedAt: new Date(),
         // Backwards compatibility
         flags: {
           cexFunded: false, // Cannot detect with proxy wallets
-          lowTxCount: subgraphFlags.lowTradeCount,
-          youngWallet: subgraphFlags.youngAccount,
+          lowTxCount: walletFlags.lowTradeCount,
+          youngWallet: walletFlags.youngAccount,
           highPolymarketNetflow: true, // Always true for Polymarket users
-          singlePurpose: subgraphFlags.highConcentration,
+          singlePurpose: walletFlags.highConcentration,
         },
         metadata: {
           totalTransactions: tradeCount,
@@ -439,10 +457,11 @@ class WalletForensicsService {
           status: 'success',
           responseTime: Date.now() - startTime,
           isSuspicious,
-          subgraphFlags,
+          walletFlags,
           tradeCount,
           volumeUSD,
           accountAgeDays,
+          marketsTraded,
           dataSource: 'data-api',
         },
         'Wallet analysis complete via Data API'
@@ -480,33 +499,40 @@ class WalletForensicsService {
     volumeUSD: number,
     accountAgeDays: number | null,
     maxPositionConcentration: number,
+    marketsTraded: number,
     tradeContext?: { tradeSizeUSD: number; marketOI: number }
-  ): SubgraphFlags {
+  ): WalletFlags {
     // lowTradeCount: Wallet has fewer than threshold trades
-    const lowTradeCount = tradeCount <= thresholds.subgraphLowTradeCount;
+    const lowTradeCount = tradeCount <= thresholds.walletLowTradeCount;
 
     // youngAccount: Wallet first trade is recent
     const youngAccount =
       accountAgeDays === null ||
-      accountAgeDays <= thresholds.subgraphYoungAccountDays;
+      accountAgeDays <= thresholds.walletYoungAccountDays;
 
     // lowVolume: Lifetime volume below threshold
-    const lowVolume = volumeUSD <= thresholds.subgraphLowVolumeUSD;
+    const lowVolume = volumeUSD <= thresholds.walletLowVolumeUSD;
 
     // highConcentration: Majority of position value in one market
     const highConcentration =
-      maxPositionConcentration >= thresholds.subgraphHighConcentrationPct;
+      maxPositionConcentration >= thresholds.walletHighConcentrationPct;
+
+    // lowDiversification: Only trades 1-3 distinct markets (INSIDER SIGNAL)
+    // Whales diversify across many markets, insiders focus on what they know
+    const diversificationThreshold =
+      thresholds.walletDiversificationThreshold ?? 3;
+    const lowDiversification = marketsTraded <= diversificationThreshold;
 
     // freshFatBet: New wallet making large bets
     let freshFatBet = false;
     if (tradeContext) {
       const priorTrades = tradeCount - 1;
       const isLargeTrade =
-        tradeContext.tradeSizeUSD >= thresholds.subgraphFreshFatBetSizeUSD;
+        tradeContext.tradeSizeUSD >= thresholds.walletFreshFatBetSizeUSD;
       const isSmallMarket =
-        tradeContext.marketOI <= thresholds.subgraphFreshFatBetMaxOI;
+        tradeContext.marketOI <= thresholds.walletFreshFatBetMaxOI;
       const isFreshAccount =
-        priorTrades <= thresholds.subgraphFreshFatBetPriorTrades;
+        priorTrades <= thresholds.walletFreshFatBetPriorTrades;
 
       freshFatBet = isLargeTrade && isSmallMarket && isFreshAccount;
 
@@ -522,24 +548,38 @@ class WalletForensicsService {
       }
     }
 
+    // Log diversification status for insider detection
+    if (lowDiversification && (youngAccount || lowTradeCount)) {
+      logger.info(
+        {
+          marketsTraded,
+          diversificationThreshold,
+          youngAccount,
+          lowTradeCount,
+        },
+        '🎯 Low diversification + fresh account = potential insider pattern'
+      );
+    }
+
     return {
       lowTradeCount,
       youngAccount,
       lowVolume,
       highConcentration,
       freshFatBet,
+      lowDiversification,
     };
   }
 
   // Note: analyzeWalletViaSubgraph method removed - use analyzeWallet instead
 
   /**
-   * Calculate subgraph-based flags
+   * Calculate wallet flags from subgraph data (legacy method)
    */
   private calculateSubgraphFlags(
     data: SubgraphWalletData,
     tradeContext?: { tradeSizeUSD: number; marketOI: number }
-  ): SubgraphFlags {
+  ): WalletFlags {
     const clobActivity = data.clobActivity;
     const splitActivity = data.activity;
     const positions = data.positions;
@@ -556,8 +596,7 @@ class WalletForensicsService {
       clobActivity?.firstTradeTimestamp ?? splitActivity?.firstTradeTimestamp;
 
     // lowTradeCount: Wallet has fewer than threshold trades
-    const lowTradeCount =
-      combinedTradeCount <= thresholds.subgraphLowTradeCount;
+    const lowTradeCount = combinedTradeCount <= thresholds.walletLowTradeCount;
 
     // youngAccount: Wallet first trade is recent
     let youngAccount = false;
@@ -565,29 +604,35 @@ class WalletForensicsService {
       const accountAgeDays = Math.floor(
         (Date.now() - firstTradeTimestamp) / (1000 * 60 * 60 * 24)
       );
-      youngAccount = accountAgeDays <= thresholds.subgraphYoungAccountDays;
+      youngAccount = accountAgeDays <= thresholds.walletYoungAccountDays;
     } else {
       youngAccount = true; // No history = very new
     }
 
     // lowVolume: Lifetime volume below threshold
-    const lowVolume = combinedVolumeUSD <= thresholds.subgraphLowVolumeUSD;
+    const lowVolume = combinedVolumeUSD <= thresholds.walletLowVolumeUSD;
 
     // highConcentration: Majority of position value in one market
     const highConcentration =
       (positions?.maxPositionPercentage ?? 0) >=
-      thresholds.subgraphHighConcentrationPct;
+      thresholds.walletHighConcentrationPct;
+
+    // lowDiversification: Count distinct markets from positions
+    const marketsTraded = positions?.positions.length ?? 0;
+    const diversificationThreshold =
+      thresholds.walletDiversificationThreshold ?? 3;
+    const lowDiversification = marketsTraded <= diversificationThreshold;
 
     // freshFatBet: New wallet making large bets
     let freshFatBet = false;
     if (tradeContext) {
       const priorTrades = combinedTradeCount - 1; // -1 for current trade
       const isLargeTrade =
-        tradeContext.tradeSizeUSD >= thresholds.subgraphFreshFatBetSizeUSD;
+        tradeContext.tradeSizeUSD >= thresholds.walletFreshFatBetSizeUSD;
       const isSmallMarket =
-        tradeContext.marketOI <= thresholds.subgraphFreshFatBetMaxOI;
+        tradeContext.marketOI <= thresholds.walletFreshFatBetMaxOI;
       const isFreshAccount =
-        priorTrades <= thresholds.subgraphFreshFatBetPriorTrades;
+        priorTrades <= thresholds.walletFreshFatBetPriorTrades;
 
       freshFatBet = isLargeTrade && isSmallMarket && isFreshAccount;
 
@@ -609,6 +654,7 @@ class WalletForensicsService {
       lowVolume,
       highConcentration,
       freshFatBet,
+      lowDiversification,
     };
   }
 
@@ -623,7 +669,7 @@ class WalletForensicsService {
   ): Promise<WalletFingerprint> {
     try {
       // Calculate what we can from partial data
-      const subgraphFlags = this.calculateSubgraphFlags(
+      const walletFlags = this.calculateSubgraphFlags(
         partialData as SubgraphWalletData, // Type assertion is safe due to our checks
         tradeContext
       );
@@ -650,7 +696,7 @@ class WalletForensicsService {
 
       // Determine if suspicious - consistent with analyzeWalletInternal (2+ flags)
       const suspiciousFlagCount =
-        Object.values(subgraphFlags).filter(Boolean).length;
+        Object.values(walletFlags).filter(Boolean).length;
       const isSuspicious = suspiciousFlagCount >= 2;
 
       // Calculate confidence for partial data scenario
@@ -660,29 +706,38 @@ class WalletForensicsService {
         null
       );
 
+      const marketsTraded = partialData.positions?.positions.length ?? 0;
+      const dataSource: 'cache' | 'mixed' = dataCompleteness.cache
+        ? 'cache'
+        : 'mixed';
+      const metadata = {
+        polymarketTradeCount: tradeCount,
+        polymarketVolumeUSD: volumeUSD,
+        polymarketAccountAgeDays: accountAgeDays,
+        maxPositionConcentration:
+          partialData.positions?.maxPositionPercentage ?? 0,
+        marketsTraded,
+        dataSource,
+      };
+
       const fingerprint: WalletFingerprint = {
         address,
         status: 'partial' as FingerprintStatus,
         isSuspicious,
         dataCompleteness,
         confidenceLevel: confidence.level,
-        subgraphFlags,
-        subgraphMetadata: {
-          polymarketTradeCount: tradeCount,
-          polymarketVolumeUSD: volumeUSD,
-          polymarketAccountAgeDays: accountAgeDays,
-          maxPositionConcentration:
-            partialData.positions?.maxPositionPercentage ?? 0,
-          dataSource: dataCompleteness.cache ? 'cache' : 'mixed',
-        },
+        walletFlags,
+        subgraphFlags: walletFlags, // Backwards compatibility
+        walletMetadata: metadata,
+        subgraphMetadata: metadata, // Backwards compatibility
         analyzedAt: new Date(),
         // Backwards compatibility
         flags: {
           cexFunded: false,
-          lowTxCount: subgraphFlags.lowTradeCount,
-          youngWallet: subgraphFlags.youngAccount,
+          lowTxCount: walletFlags.lowTradeCount,
+          youngWallet: walletFlags.youngAccount,
           highPolymarketNetflow: true,
-          singlePurpose: subgraphFlags.highConcentration,
+          singlePurpose: walletFlags.highConcentration,
         },
         metadata: {
           totalTransactions: tradeCount,
@@ -743,27 +798,38 @@ class WalletForensicsService {
       normalizeVolume(partialData?.activity?.totalVolumeUSD, 'subgraph') ||
       0;
 
+    const walletFlags: WalletFlags = {
+      lowTradeCount: false,
+      youngAccount: false,
+      lowVolume: false,
+      highConcentration: false,
+      freshFatBet: false,
+      lowDiversification: false,
+    };
+
+    const dataSource: 'cache' | 'data-api' = dataCompleteness.cache
+      ? 'cache'
+      : 'data-api';
+    const metadata = {
+      polymarketTradeCount: tradeCount,
+      polymarketVolumeUSD: volumeUSD,
+      polymarketAccountAgeDays: null,
+      maxPositionConcentration: 0,
+      marketsTraded: 0,
+      dataSource,
+    };
+
     return {
       address,
       status: 'error' as FingerprintStatus,
-      isSuspicious: true, // CHANGED: Flag as suspicious on errors - better safe than sorry
+      isSuspicious: true, // Flag as suspicious on errors - better safe than sorry
       errorReason,
       dataCompleteness,
       confidenceLevel: 'none',
-      subgraphFlags: {
-        lowTradeCount: false,
-        youngAccount: false,
-        lowVolume: false,
-        highConcentration: false,
-        freshFatBet: false,
-      },
-      subgraphMetadata: {
-        polymarketTradeCount: tradeCount,
-        polymarketVolumeUSD: volumeUSD,
-        polymarketAccountAgeDays: null,
-        maxPositionConcentration: 0,
-        dataSource: dataCompleteness.cache ? 'cache' : 'data-api',
-      },
+      walletFlags,
+      subgraphFlags: walletFlags, // Backwards compatibility
+      walletMetadata: metadata,
+      subgraphMetadata: metadata, // Backwards compatibility
       analyzedAt: new Date(),
       // Backwards compatibility
       flags: {
@@ -794,23 +860,32 @@ class WalletForensicsService {
   ): WalletFingerprint {
     const freshFatBet =
       tradeContext &&
-      tradeContext.tradeSizeUSD >= thresholds.subgraphFreshFatBetSizeUSD &&
-      tradeContext.marketOI <= thresholds.subgraphFreshFatBetMaxOI;
+      tradeContext.tradeSizeUSD >= thresholds.walletFreshFatBetSizeUSD &&
+      tradeContext.marketOI <= thresholds.walletFreshFatBetMaxOI;
 
-    const subgraphFlags: SubgraphFlags = {
+    const walletFlags: WalletFlags = {
       lowTradeCount: true,
       youngAccount: true,
       lowVolume: true,
-      highConcentration: true,
+      highConcentration: true, // First trade = 100% concentration
       freshFatBet: freshFatBet ?? false,
+      lowDiversification: true, // New user = 1 market = low diversification
     };
 
     // Use consistent logic: count flags >= 2 = suspicious
-    // New users have 4 true flags (lowTradeCount, youngAccount, lowVolume, highConcentration)
-    // so they are always suspicious, plus freshFatBet if applicable
+    // New users have 5 true flags, so they are always suspicious
     const suspiciousFlagCount =
-      Object.values(subgraphFlags).filter(Boolean).length;
+      Object.values(walletFlags).filter(Boolean).length;
     const isSuspicious = suspiciousFlagCount >= 2;
+
+    const metadata = {
+      polymarketTradeCount: 0,
+      polymarketVolumeUSD: 0,
+      polymarketAccountAgeDays: 0,
+      maxPositionConcentration: 100, // First trade = 100% concentration
+      marketsTraded: 1, // First trade = 1 market
+      dataSource: 'data-api' as const,
+    };
 
     return {
       address,
@@ -823,22 +898,18 @@ class WalletForensicsService {
         timestamp: Date.now(),
       },
       confidenceLevel: freshFatBet ? 'medium' : 'low', // New users have inherent uncertainty
-      subgraphFlags,
-      subgraphMetadata: {
-        polymarketTradeCount: 0,
-        polymarketVolumeUSD: 0,
-        polymarketAccountAgeDays: 0,
-        maxPositionConcentration: 100, // First trade = 100% concentration
-        dataSource: 'data-api',
-      },
+      walletFlags,
+      subgraphFlags: walletFlags, // Backwards compatibility
+      walletMetadata: metadata,
+      subgraphMetadata: metadata, // Backwards compatibility
       analyzedAt: new Date(),
       // Backwards compatibility
       flags: {
         cexFunded: false,
-        lowTxCount: subgraphFlags.lowTradeCount,
-        youngWallet: subgraphFlags.youngAccount,
+        lowTxCount: walletFlags.lowTradeCount,
+        youngWallet: walletFlags.youngAccount,
         highPolymarketNetflow: true,
-        singlePurpose: subgraphFlags.highConcentration,
+        singlePurpose: walletFlags.highConcentration,
       },
       metadata: {
         totalTransactions: 0,
