@@ -122,6 +122,7 @@ class MarketService {
           category: string | null;
           enabled: boolean;
           notes: string | null;
+          endDate: Date | null;
           openInterest: { toString(): string };
           volume: { toString(): string };
         }): MarketConfig => {
@@ -144,6 +145,9 @@ class MarketService {
           };
           if (m.notes !== null) {
             config.notes = m.notes;
+          }
+          if (m.endDate !== null) {
+            config.endDate = m.endDate.toISOString();
           }
           return config;
         }

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { timingSafeEqual } from 'crypto';
 import axios from 'axios';
 
 import { db } from '../services/database/prisma.js';
@@ -55,8 +56,7 @@ function authenticateRequest(
   // Use timing-safe comparison to prevent timing attacks
   if (
     !providedToken ||
-    providedToken.length !== secretToken.length ||
-    providedToken !== secretToken
+    !timingSafeEqual(Buffer.from(providedToken), Buffer.from(secretToken))
   ) {
     logger.warn({ ip: request.ip }, 'Invalid API token provided');
     void reply.code(403).send({

@@ -119,7 +119,7 @@ export interface Alert {
   marketQuestion: string;
   marketSlug: string;
   tradeSignal: TradeSignal;
-  walletFingerprint: any; // Using 'any' temporarily - actual type is in wallet-forensics.ts
+  walletFingerprint: Record<string, unknown>; // Actual type is WalletFingerprint in wallet-forensics.ts
   dormancyMetrics?: DormancyMetrics; // Optional - dormancy no longer used for signal gating
   timingWindows: TimingWindow[];
   confidenceScore: number;
@@ -144,19 +144,9 @@ export interface MarketConfig {
   category: 'politics' | 'corporate' | 'sports' | 'misc';
   enabled: boolean;
   notes?: string;
+  endDate?: string;
   openInterest: string;
   volume: string;
-}
-
-export interface DetectionThresholds {
-  minOiPercentage: number;
-  minPriceImpact: number;
-  dormantHoursNoLargeTrades: number;
-  dormantHoursNoPriceMoves: number;
-  dormantLargeTradeThreshold: number;
-  dormantPriceMoveThreshold: number;
-  minWalletScore: number;
-  minConfidenceScore: number;
 }
 
 // ============================================================================

@@ -43,7 +43,7 @@ RUN npm run build
 FROM node:20-alpine AS runner
 
 # Install OpenSSL and compatibility libraries for Prisma
-RUN apk add --no-cache openssl openssl-dev libc6-compat
+RUN apk add --no-cache openssl libc6-compat
 
 # Set non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \

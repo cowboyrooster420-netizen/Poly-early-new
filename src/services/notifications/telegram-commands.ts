@@ -589,9 +589,9 @@ class TelegramCommandHandler {
         `• Trades processed: ${recentTrades}\n` +
         `• Alerts sent (24h): ${recentAlerts}\n\n` +
         `*Scoring System:*\n` +
-        `• Alert threshold: Score ≥ 40\n` +
-        `• Min trade size: $1,000\n` +
-        `• Min OI: $5,000\n\n` +
+        `• Alert threshold: Score ≥ ${Number(process.env['ALERT_THRESHOLD']) || 50}\n` +
+        `• Min trade size: $${(Number(process.env['MIN_TRADE_SIZE_USD']) || 1000).toLocaleString()}\n` +
+        `• Min OI: $${(Number(process.env['MIN_OI_USD']) || 5000).toLocaleString()}\n\n` +
         `*All-Time Alerts:*\n` +
         `• 🚨 Strong: ${alertStrong}\n` +
         `• 🔴 High: ${alertHigh}\n` +
@@ -642,30 +642,31 @@ class TelegramCommandHandler {
         // No trade context for manual check
       );
 
+      const flags = fingerprint.walletFlags;
+      const meta = fingerprint.walletMetadata;
       const flagEmojis = {
-        cexFunded: fingerprint.flags.cexFunded ? '✅' : '❌',
-        lowTxCount: fingerprint.flags.lowTxCount ? '✅' : '❌',
-        youngWallet: fingerprint.flags.youngWallet ? '✅' : '❌',
-        highPolymarketNetflow: fingerprint.flags.highPolymarketNetflow
-          ? '✅'
-          : '❌',
-        singlePurpose: fingerprint.flags.singlePurpose ? '✅' : '❌',
+        lowTradeCount: flags.lowTradeCount ? '✅' : '❌',
+        youngAccount: flags.youngAccount ? '✅' : '❌',
+        lowVolume: flags.lowVolume ? '✅' : '❌',
+        highConcentration: flags.highConcentration ? '✅' : '❌',
+        freshFatBet: flags.freshFatBet ? '✅' : '❌',
+        lowDiversification: flags.lowDiversification ? '✅' : '❌',
       };
 
-      const suspiciousCount = Object.values(fingerprint.flags).filter(
-        Boolean
-      ).length;
+      const suspiciousCount = Object.values(flags).filter(Boolean).length;
 
       const message =
         `🔍 *Wallet Analysis*\n\n` +
         `*Address:* \`${wallet}\`\n` +
-        `*Suspicious:* ${fingerprint.isSuspicious ? '🚨 YES' : '✅ NO'} (${suspiciousCount}/5 flags)\n\n` +
-        `*Flags:*\n` +
-        `${flagEmojis.cexFunded} CEX Funded${fingerprint.metadata.cexFundingSource ? ` (${fingerprint.metadata.cexFundingSource})` : ''}\n` +
-        `${flagEmojis.lowTxCount} Low Tx Count (${fingerprint.metadata.totalTransactions} txs)\n` +
-        `${flagEmojis.youngWallet} Young Wallet (${fingerprint.metadata.walletAgeDays} days)\n` +
-        `${flagEmojis.highPolymarketNetflow} High Polymarket Flow (${fingerprint.metadata.polymarketNetflowPercentage.toFixed(1)}%)\n` +
-        `${flagEmojis.singlePurpose} Single Purpose (${fingerprint.metadata.uniqueProtocolsInteracted} protocols)\n`;
+        `*Suspicious:* ${fingerprint.isSuspicious ? '🚨 YES' : '✅ NO'} (${suspiciousCount}/6 flags)\n\n` +
+        `*Insider Flags:*\n` +
+        `${flagEmojis.highConcentration} High Concentration (${meta.maxPositionConcentration.toFixed(0)}% in one market)\n` +
+        `${flagEmojis.freshFatBet} Fresh Fat Bet (new wallet + large bet)\n` +
+        `${flagEmojis.lowDiversification} Low Diversification (${meta.marketsTraded} markets)\n\n` +
+        `*New User Flags:*\n` +
+        `${flagEmojis.lowTradeCount} Low Trade Count (${meta.polymarketTradeCount} trades)\n` +
+        `${flagEmojis.youngAccount} Young Account (${meta.polymarketAccountAgeDays ?? 0} days)\n` +
+        `${flagEmojis.lowVolume} Low Volume ($${meta.polymarketVolumeUSD.toFixed(0)})\n`;
 
       await this.sendMessage(chatId, message);
 

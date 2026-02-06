@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: polymarket_dev_pass
       POSTGRES_DB: polymarket_bot
     ports:
-      - '5432:5432'
+      - '127.0.0.1:5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - '6379:6379'
+      - '127.0.0.1:6379:6379'
     volumes:
       - redis_data:/data
     healthcheck:
@@ -50,7 +50,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 3000
       LOG_LEVEL: debug
       DATABASE_URL: postgresql://polymarket:polymarket_dev_pass@postgres:5432/polymarket_bot?schema=public
@@ -60,8 +60,6 @@ services:
       POLYGONSCAN_API_KEY: ${POLYGONSCAN_API_KEY}
     ports:
       - '3000:3000'
-    volumes:
-      - ./src:/app/src:ro
     env_file:
       - .env
 

@@ -30,6 +30,7 @@ class TradeService {
   private isProcessing = false;
   private processingPromise: Promise<void> | null = null;
   private readonly MAX_QUEUE_SIZE = 5000; // Increased from 1000 to handle rate limit backoffs
+  private readonly MAX_DLQ_SIZE = 500; // Cap dead letter queue to prevent unbounded growth
   private readonly HIGH_WATER_MARK = 2500; // 50% - signal backpressure
   private readonly LOW_WATER_MARK = 1000; // 20% - resume normal operation
   private readonly MAX_RETRY_ATTEMPTS = 3;
@@ -211,6 +212,14 @@ class TradeService {
    * Move failed trade to dead letter queue
    */
   private moveToDeadLetterQueue(queuedTrade: QueuedTrade): void {
+    // Cap DLQ size to prevent unbounded memory growth
+    if (this.deadLetterQueue.length >= this.MAX_DLQ_SIZE) {
+      const dropped = this.deadLetterQueue.shift();
+      logger.warn(
+        { droppedTradeId: dropped?.trade.id, dlqSize: this.MAX_DLQ_SIZE },
+        'DLQ at capacity - dropping oldest entry'
+      );
+    }
     this.deadLetterQueue.push(queuedTrade);
 
     logger.error(
@@ -325,7 +334,8 @@ class TradeService {
           await this.detectSignals(
             tradeWithMarketId,
             market.question,
-            market.slug
+            market.slug,
+            market.endDate
           );
           logger.debug(
             { tradeId: tradeWithMarketId.id },
@@ -473,7 +483,8 @@ class TradeService {
   private async detectSignals(
     trade: PolymarketTrade,
     marketQuestion: string,
-    marketSlug: string
+    marketSlug: string,
+    marketEndDate?: string
   ): Promise<void> {
     try {
       // Always update last trade timestamp for dormancy tracking
@@ -625,6 +636,7 @@ class TradeService {
         tradeSignal: signal,
         walletFingerprint,
         entryProbability,
+        marketEndDate,
       });
 
       // Check if filtered out by hard filters
@@ -931,10 +943,8 @@ class TradeService {
       }
     }
 
-    // Start processing if not already running
-    if (!this.isProcessing) {
-      void this.processQueue();
-    }
+    // Start processing if not already running (use ensureProcessing for crash recovery)
+    this.ensureProcessing();
 
     return count;
   }

@@ -42,7 +42,8 @@ class RedisService {
     this.redisUrl = redisUrl;
 
     try {
-      logger.info({ redisUrl }, 'Connecting to Redis...');
+      const redactedUrl = redisUrl.replace(/\/\/[^@]*@/, '//***:***@');
+      logger.info({ redisUrl: redactedUrl }, 'Connecting to Redis...');
 
       this.client = new RedisConstructor(redisUrl, {
         maxRetriesPerRequest: 3,
@@ -385,6 +386,11 @@ class RedisService {
    * Flush all keys (use with caution!)
    */
   public async flushAll(): Promise<void> {
+    if (process.env['NODE_ENV'] === 'production') {
+      logger.error('FLUSHALL blocked in production');
+      return;
+    }
+
     const client = this.getClient();
 
     try {

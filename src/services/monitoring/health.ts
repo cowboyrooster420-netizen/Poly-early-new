@@ -266,8 +266,15 @@ export class HealthMonitor {
       };
 
       // Get cache statistics
-      const cacheKeys = await redis.getClient().keys('wallet:subgraph:*');
-      const recentKeys = cacheKeys; // Would need to track access times for real implementation
+      let cursor = '0';
+      let count = 0;
+      do {
+        const [nextCursor, keys] = await redis
+          .getClient()
+          .scan(Number(cursor), 'MATCH', 'wallet:subgraph:*', 'COUNT', 100);
+        count += keys.length;
+        cursor = String(nextCursor);
+      } while (cursor !== '0');
 
       // Calculate error rate from recent fingerprints
       const errorCount =
@@ -282,8 +289,8 @@ export class HealthMonitor {
       return {
         circuitBreakers: circuits,
         cacheStats: {
-          totalKeys: cacheKeys.length,
-          recentKeys: recentKeys.length,
+          totalKeys: count,
+          recentKeys: count,
           hitRate: 'N/A', // Would need to track this
         },
         errorRate,

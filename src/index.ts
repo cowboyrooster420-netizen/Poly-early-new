@@ -39,6 +39,7 @@ import { tradePoller } from './services/polymarket/trade-poller.js';
 import { telegramNotifier } from './services/notifications/telegram-notifier.js';
 import { telegramCommands } from './services/notifications/telegram-commands.js';
 import { cleanupService } from './services/database/cleanup-service.js';
+import { walletForensicsService } from './services/blockchain/wallet-forensics.js';
 import { logger } from './utils/logger.js';
 
 /**
@@ -46,6 +47,10 @@ import { logger } from './utils/logger.js';
  * Sets up HTTP server, WebSocket connections, and graceful shutdown
  */
 async function main(): Promise<void> {
+  let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  let oiRefreshInterval: ReturnType<typeof setInterval> | null = null;
+  let initialOiTimeout: ReturnType<typeof setTimeout> | null = null;
+
   logger.info('🚀 Starting Polymarket Insider Bot...');
 
   // Validate environment on startup
@@ -169,7 +174,7 @@ async function main(): Promise<void> {
 
     // Set up hourly heartbeat
     const ONE_HOUR = 60 * 60 * 1000;
-    setInterval(() => {
+    heartbeatInterval = setInterval(() => {
       const now = new Date().toISOString();
       telegramNotifier
         .sendHeartbeat()
@@ -192,14 +197,14 @@ async function main(): Promise<void> {
   const TEN_MINUTES = 10 * 60 * 1000;
 
   // Run initial refresh after 30 seconds
-  setTimeout(() => {
+  initialOiTimeout = setTimeout(() => {
     marketService.refreshOpenInterest().catch((err) => {
       logger.error({ error: err }, 'Failed initial OI refresh');
     });
   }, 30000);
 
   // Then refresh every 10 minutes
-  setInterval(() => {
+  oiRefreshInterval = setInterval(() => {
     marketService.refreshOpenInterest().catch((err) => {
       logger.error({ error: err }, 'Failed periodic OI refresh');
     });
@@ -211,6 +216,14 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'Received shutdown signal');
 
     try {
+      // Clear periodic timers
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (oiRefreshInterval) clearInterval(oiRefreshInterval);
+      if (initialOiTimeout) clearTimeout(initialOiTimeout);
+
+      // Stop wallet forensics cleanup
+      walletForensicsService.stopPeriodicCleanup();
+
       // Close HTTP server
       await app.close();
       logger.info('HTTP server closed');
@@ -295,6 +308,7 @@ async function main(): Promise<void> {
     // Try to send Telegram notification before dying
     // Note: Only send error message, not stack trace (security best practice)
     if (telegramNotifier.isConfigured()) {
+      const fallbackTimer = setTimeout(() => process.exit(1), 3000);
       telegramNotifier
         .sendMessage(
           `💀 BOT CRASHED!\n\nError: ${error.name}: ${error.message}\n\nCheck server logs for details.`
@@ -306,10 +320,9 @@ async function main(): Promise<void> {
           );
         })
         .finally(() => {
+          clearTimeout(fallbackTimer);
           process.exit(1);
         });
-      // Give it 3 seconds to send
-      setTimeout(() => process.exit(1), 3000);
     } else {
       process.exit(1);
     }
@@ -334,6 +347,7 @@ async function main(): Promise<void> {
     // Try to send Telegram notification before dying
     // Note: Only send error message, not stack trace (security best practice)
     if (telegramNotifier.isConfigured()) {
+      const fallbackTimer = setTimeout(() => process.exit(1), 3000);
       telegramNotifier
         .sendMessage(
           `💀 BOT CRASHED!\n\nUnhandled Rejection: ${errorName}: ${errorMessage}\n\nCheck server logs for details.`
@@ -345,10 +359,9 @@ async function main(): Promise<void> {
           );
         })
         .finally(() => {
+          clearTimeout(fallbackTimer);
           process.exit(1);
         });
-      // Give it 3 seconds to send
-      setTimeout(() => process.exit(1), 3000);
     } else {
       process.exit(1);
     }

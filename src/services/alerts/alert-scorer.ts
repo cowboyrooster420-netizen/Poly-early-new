@@ -28,6 +28,9 @@ export interface AlertScore {
     impactPercentage: number; // Actual percentage used
     walletContribution: number; // 60% of wallet score
     impactContribution: number; // 40% of impact score
+    resolutionProximityBonus: number; // 0-25 additive bonus for trading near resolution
+    contrarianBonus: number; // -5 to +20 bonus for betting against the crowd
+    walletDormancyBonus: number; // 0-15 bonus for dormant wallet waking up
   };
   multipliers: {
     marketSize: number; // 1.0, 1.5, or 2.0
@@ -45,6 +48,7 @@ export interface ScoreInput {
   tradeSignal: TradeSignal;
   walletFingerprint: WalletFingerprint;
   entryProbability: number; // 0.0-1.0 (trade price)
+  marketEndDate?: string | undefined; // ISO date string - market resolution date
 }
 
 /**
@@ -129,7 +133,8 @@ class AlertScorerService {
    * New tiered scoring with multipliers
    */
   public async calculateScore(params: ScoreInput): Promise<AlertScore> {
-    const { tradeSignal, walletFingerprint, entryProbability } = params;
+    const { tradeSignal, walletFingerprint, entryProbability, marketEndDate } =
+      params;
 
     const openInterest = parseFloat(tradeSignal.openInterest);
     const tradeUsdValue = tradeSignal.tradeUsdValue;
@@ -175,9 +180,24 @@ class AlertScorerService {
       impactScore = impactScore * marketSizeMultiplier * dormancyMultiplier;
       impactScore = Math.min(100, impactScore);
 
+      const resolutionProximityBonus = this.getResolutionProximityBonus(
+        marketEndDate,
+        tradeSignal.timestamp
+      );
+      const contrarianBonus = this.getContrarianBonus(
+        entryProbability,
+        tradeSignal.outcome
+      );
+      const walletDormancyBonus = 0; // Cannot compute for error fingerprints
       const walletContribution = 0.6 * walletScore100;
       const impactContribution = 0.4 * impactScore;
-      const finalScore = walletContribution + impactContribution;
+      const finalScore = Math.min(
+        100,
+        walletContribution +
+          impactContribution +
+          resolutionProximityBonus +
+          contrarianBonus
+      );
 
       const classification = this.classify(finalScore);
 
@@ -194,6 +214,9 @@ class AlertScorerService {
           impactPercentage,
           walletContribution: Math.round(walletContribution),
           impactContribution: Math.round(impactContribution),
+          resolutionProximityBonus,
+          contrarianBonus,
+          walletDormancyBonus,
         },
         multipliers: {
           marketSize: marketSizeMultiplier,
@@ -271,37 +294,51 @@ class AlertScorerService {
     // Apply multipliers
     impactScore = impactScore * marketSizeMultiplier * dormancyMultiplier;
 
-    // Absolute size bonus for whale trades
-    if (tradeSignal.passedViaAbsoluteSize && tradeSignal.absoluteSizeTier) {
-      // Give bonus points for large absolute trades that had low relative impact
-      if (tradeSignal.absoluteSizeTier === 'whale') {
-        impactScore += 40; // $100k+ trades
-      } else if (tradeSignal.absoluteSizeTier === 'large') {
-        impactScore += 25; // $50k+ trades
-      } else if (tradeSignal.absoluteSizeTier === 'significant') {
-        impactScore += 15; // $25k+ trades
-      } else if (tradeSignal.absoluteSizeTier === 'notable') {
-        impactScore += 10; // $10k+ trades
-      }
-    }
-
-    // Price impact bonus (deprecated - keeping for backwards compatibility)
-    if (tradeSignal.priceImpact >= 10) {
-      impactScore += 30;
-    } else if (tradeSignal.priceImpact >= 5) {
-      impactScore += 15;
-    }
-
     impactScore = Math.min(100, impactScore);
 
     // ----------------------------------
-    // 3. FINAL WEIGHTED SCORE (without extremity)
-    // Weights: Wallet 60%, Impact 40%
+    // 3. RESOLUTION PROXIMITY BONUS
+    // Insiders trade close to resolution when their info is most valuable
+    // ----------------------------------
+    const resolutionProximityBonus = this.getResolutionProximityBonus(
+      marketEndDate,
+      tradeSignal.timestamp
+    );
+
+    // ----------------------------------
+    // 3b. CONTRARIAN POSITION BONUS
+    // Insiders bet against the crowd when they know the outcome
+    // Buying a sub-20% probability outcome is highly diagnostic
+    // ----------------------------------
+    const contrarianBonus = this.getContrarianBonus(
+      entryProbability,
+      tradeSignal.outcome
+    );
+
+    // ----------------------------------
+    // 3c. WALLET DORMANCY BONUS
+    // A wallet that was inactive for weeks then suddenly makes a big bet is suspicious
+    // ----------------------------------
+    const walletDormancyBonus = this.getWalletDormancyBonus(
+      walletFingerprint,
+      tradeSignal.timestamp
+    );
+
+    // ----------------------------------
+    // 4. FINAL WEIGHTED SCORE
+    // Weights: Wallet 60%, Impact 40%, + additive bonuses
     // ----------------------------------
     const walletContribution = 0.6 * walletScore100;
     const impactContribution = 0.4 * impactScore;
 
-    const finalScore = walletContribution + impactContribution;
+    const finalScore = Math.min(
+      100,
+      walletContribution +
+        impactContribution +
+        resolutionProximityBonus +
+        contrarianBonus +
+        walletDormancyBonus
+    );
 
     // ----------------------------------
     // 5. ADJUST FOR FINGERPRINT CONFIDENCE
@@ -343,6 +380,9 @@ class AlertScorerService {
         impactPercentage,
         walletContribution: Math.round(walletContribution),
         impactContribution: Math.round(impactContribution),
+        resolutionProximityBonus,
+        contrarianBonus,
+        walletDormancyBonus,
       },
       multipliers: {
         marketSize: marketSizeMultiplier,
@@ -377,10 +417,13 @@ class AlertScorerService {
           impactMethod,
           impactPercentage: impactPercentage.toFixed(2) + '%',
           impactContrib: Math.round(impactContribution), // 40% weight
+          resolutionProximityBonus,
+          contrarianBonus,
+          walletDormancyBonus,
         },
         multipliers: score.multipliers,
       },
-      '📊 Score breakdown (v3)'
+      '📊 Score breakdown (v5 - insider signals)'
     );
 
     return score;
@@ -459,26 +502,28 @@ class AlertScorerService {
     const flags = wallet.subgraphFlags;
 
     // ============================================
-    // REDUCED WEIGHT - These catch whales too
+    // GENERIC "NEW USER" FLAGS — capped at 10 total
+    // These catch whales too, so they shouldn't dominate
     // ============================================
+    let newUserPoints = 0;
 
-    // Low trade count on Polymarket (6 points, was 14)
-    // A whale new to Polymarket will also have low trade count
+    // Low trade count on Polymarket (4 points)
     if (flags.lowTradeCount) {
-      score += 6;
+      newUserPoints += 4;
     }
 
-    // Young account on Polymarket (6 points, was 12)
-    // A whale new to Polymarket will also have young account
+    // Young account on Polymarket (4 points)
     if (flags.youngAccount) {
-      score += 6;
+      newUserPoints += 4;
     }
 
-    // Low volume trader (4 points, was 6)
-    // Less meaningful on its own
+    // Low volume trader (3 points)
     if (flags.lowVolume) {
-      score += 4;
+      newUserPoints += 3;
     }
+
+    // Cap generic new-user flags — being new alone is not suspicious
+    score += Math.min(10, newUserPoints);
 
     // ============================================
     // INCREASED WEIGHT - Strong insider signals
@@ -612,8 +657,79 @@ class AlertScorerService {
   }
 
   /**
+   * Get wallet dormancy bonus
+   * A wallet that was inactive for weeks then suddenly makes a big bet is suspicious.
+   * Uses lastTradeTimestamp from the Data API.
+   */
+  private getWalletDormancyBonus(
+    wallet: WalletFingerprint,
+    tradeTimestamp: number
+  ): number {
+    const lastTrade = wallet.walletMetadata.lastTradeTimestamp;
+    if (lastTrade === null) return 0; // New user or no data — handled by other signals
+
+    const daysSinceLastTrade =
+      (tradeTimestamp - lastTrade) / (1000 * 60 * 60 * 24);
+
+    if (daysSinceLastTrade >= 30) return 15;
+    if (daysSinceLastTrade >= 14) return 10;
+    if (daysSinceLastTrade >= 7) return 5;
+    return 0;
+  }
+
+  /**
+   * Get contrarian position bonus
+   * Insiders bet against the crowd when they know the outcome.
+   * Buying a sub-20% probability outcome is highly diagnostic of informed trading.
+   * The "side price" is what probability you're betting ON:
+   *   - Buying YES at 0.15 means you're betting on 15% probability (contrarian)
+   *   - Buying NO at 0.85 means you're betting on 15% probability (contrarian)
+   */
+  private getContrarianBonus(
+    entryProbability: number,
+    outcome: 'yes' | 'no'
+  ): number {
+    // The price the trader is betting ON
+    const sidePrice =
+      outcome === 'yes' ? entryProbability : 1 - entryProbability;
+
+    if (sidePrice < 0.2) return 20; // Heavy underdog bet — very suspicious
+    if (sidePrice < 0.35) return 10; // Contrarian bet
+    if (sidePrice > 0.65) return -5; // Going with the crowd — less suspicious
+    return 0; // Coin-flip territory — neutral
+  }
+
+  /**
+   * Get resolution proximity bonus
+   * Insiders trade close to market resolution when their information is most valuable.
+   * This is an additive bonus on top of the weighted score.
+   */
+  private getResolutionProximityBonus(
+    marketEndDate: string | undefined,
+    tradeTimestamp: number
+  ): number {
+    if (!marketEndDate) return 0;
+
+    try {
+      const endTime = new Date(marketEndDate).getTime();
+      const tradeTime = tradeTimestamp;
+      const hoursUntilResolution = (endTime - tradeTime) / (1000 * 60 * 60);
+
+      // Already resolved or invalid
+      if (hoursUntilResolution < 0) return 0;
+
+      if (hoursUntilResolution <= 24) return 25;
+      if (hoursUntilResolution <= 72) return 15;
+      if (hoursUntilResolution <= 168) return 8; // 7 days
+      return 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
    * Classify final score
-   * Max possible: 60 (wallet) + 40 (impact) = 100
+   * Max possible: 60 (wallet) + 40 (impact) + 25 (resolution proximity) = 125, capped at 100
    * Thresholds now configurable via ALERT_THRESHOLD and LOG_THRESHOLD env vars
    */
   private classify(score: number): AlertClassification {
@@ -641,6 +757,9 @@ class AlertScorerService {
         impactPercentage: 0,
         walletContribution: 0,
         impactContribution: 0,
+        resolutionProximityBonus: 0,
+        contrarianBonus: 0,
+        walletDormancyBonus: 0,
       },
       multipliers: {
         marketSize: 1.0,

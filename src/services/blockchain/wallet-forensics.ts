@@ -44,6 +44,7 @@ export interface WalletFingerprint {
     polymarketAccountAgeDays: number | null;
     maxPositionConcentration: number;
     marketsTraded: number; // Distinct markets traded (for diversification check)
+    lastTradeTimestamp: number | null; // Unix timestamp of last trade (for wallet dormancy)
     dataSource: 'subgraph' | 'data-api' | 'mixed' | 'cache';
   };
   // Alias for backwards compatibility
@@ -406,12 +407,17 @@ class WalletForensicsService {
         errors.length > 0 ? errors : undefined
       );
 
+      const lastTradeTs = activity?.lastTradeTimestamp
+        ? activity.lastTradeTimestamp * 1000 // Convert seconds to ms
+        : null;
+
       const metadata = {
         polymarketTradeCount: tradeCount,
         polymarketVolumeUSD: volumeUSD,
         polymarketAccountAgeDays: accountAgeDays,
         maxPositionConcentration,
         marketsTraded,
+        lastTradeTimestamp: lastTradeTs,
         dataSource: 'data-api' as const,
       };
 
@@ -717,6 +723,7 @@ class WalletForensicsService {
         maxPositionConcentration:
           partialData.positions?.maxPositionPercentage ?? 0,
         marketsTraded,
+        lastTradeTimestamp: null as number | null,
         dataSource,
       };
 
@@ -813,9 +820,10 @@ class WalletForensicsService {
     const metadata = {
       polymarketTradeCount: tradeCount,
       polymarketVolumeUSD: volumeUSD,
-      polymarketAccountAgeDays: null,
+      polymarketAccountAgeDays: null as number | null,
       maxPositionConcentration: 0,
       marketsTraded: 0,
+      lastTradeTimestamp: null as number | null,
       dataSource,
     };
 
@@ -884,6 +892,7 @@ class WalletForensicsService {
       polymarketAccountAgeDays: 0,
       maxPositionConcentration: 100, // First trade = 100% concentration
       marketsTraded: 1, // First trade = 1 market
+      lastTradeTimestamp: null as number | null, // New user has no prior trades
       dataSource: 'data-api' as const,
     };
 

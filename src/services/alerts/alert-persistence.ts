@@ -96,9 +96,9 @@ class AlertPersistenceService {
               data.walletFingerprint.metadata.polymarketNetflowPercentage,
 
             // Score breakdown (v2 - tiered scoring with multipliers)
-            scoreTradeSize: data.scoreBreakdown.impactContribution, // OI contribution (35% weight)
+            scoreTradeSize: data.scoreBreakdown.impactContribution, // OI contribution (40% weight)
             scoreDormancy: 0, // Stored in multipliers now
-            scoreWalletSuspicion: data.scoreBreakdown.walletContribution, // Wallet contribution (50% weight)
+            scoreWalletSuspicion: data.scoreBreakdown.walletContribution, // Wallet contribution (60% weight)
             scoreTiming: 0, // Extremity removed - no longer used
 
             // Alert metadata

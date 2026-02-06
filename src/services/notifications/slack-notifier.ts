@@ -117,7 +117,7 @@ class SlackNotifierService {
    */
   private buildAlertPayload(alert: AlertData): SlackPayload {
     const emoji = this.getEmojiForClassification(alert.classification);
-    const polymarketUrl = `https://polymarket.com/event/${alert.marketId}`;
+    const polymarketUrl = `https://polymarket.com/event/${alert.marketSlug}`;
     const walletShort = `${alert.walletAddress.substring(0, 6)}...${alert.walletAddress.substring(38)}`;
     const polygonscanUrl = `https://polygonscan.com/address/${alert.walletAddress}`;
 
