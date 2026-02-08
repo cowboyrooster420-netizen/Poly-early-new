@@ -31,6 +31,7 @@ export interface AlertScore {
     resolutionProximityBonus: number; // 0-25 additive bonus for trading near resolution
     contrarianBonus: number; // -5 to +20 bonus for betting against the crowd
     walletDormancyBonus: number; // 0-15 bonus for dormant wallet waking up
+    clusterBonus: number; // 0-20 bonus for multiple wallets trading same direction
   };
   multipliers: {
     marketSize: number; // 1.0, 1.5, or 2.0
@@ -49,6 +50,7 @@ export interface ScoreInput {
   walletFingerprint: WalletFingerprint;
   entryProbability: number; // 0.0-1.0 (trade price)
   marketEndDate?: string | undefined; // ISO date string - market resolution date
+  clusterWalletCount?: number; // Number of OTHER unique wallets trading same market+side recently
 }
 
 /**
@@ -133,8 +135,13 @@ class AlertScorerService {
    * New tiered scoring with multipliers
    */
   public async calculateScore(params: ScoreInput): Promise<AlertScore> {
-    const { tradeSignal, walletFingerprint, entryProbability, marketEndDate } =
-      params;
+    const {
+      tradeSignal,
+      walletFingerprint,
+      entryProbability,
+      marketEndDate,
+      clusterWalletCount,
+    } = params;
 
     const openInterest = parseFloat(tradeSignal.openInterest);
     const tradeUsdValue = tradeSignal.tradeUsdValue;
@@ -189,6 +196,7 @@ class AlertScorerService {
         tradeSignal.outcome
       );
       const walletDormancyBonus = 0; // Cannot compute for error fingerprints
+      const clusterBonus = this.getClusterBonus(clusterWalletCount ?? 0);
       const walletContribution = 0.6 * walletScore100;
       const impactContribution = 0.4 * impactScore;
       const finalScore = Math.min(
@@ -196,7 +204,8 @@ class AlertScorerService {
         walletContribution +
           impactContribution +
           resolutionProximityBonus +
-          contrarianBonus
+          contrarianBonus +
+          clusterBonus
       );
 
       const classification = this.classify(finalScore);
@@ -217,6 +226,7 @@ class AlertScorerService {
           resolutionProximityBonus,
           contrarianBonus,
           walletDormancyBonus,
+          clusterBonus,
         },
         multipliers: {
           marketSize: marketSizeMultiplier,
@@ -325,6 +335,12 @@ class AlertScorerService {
     );
 
     // ----------------------------------
+    // 3d. CLUSTER BONUS
+    // Multiple unique wallets piling into the same side = coordinated activity
+    // ----------------------------------
+    const clusterBonus = this.getClusterBonus(clusterWalletCount ?? 0);
+
+    // ----------------------------------
     // 4. FINAL WEIGHTED SCORE
     // Weights: Wallet 60%, Impact 40%, + additive bonuses
     // ----------------------------------
@@ -337,7 +353,8 @@ class AlertScorerService {
         impactContribution +
         resolutionProximityBonus +
         contrarianBonus +
-        walletDormancyBonus
+        walletDormancyBonus +
+        clusterBonus
     );
 
     // ----------------------------------
@@ -383,6 +400,7 @@ class AlertScorerService {
         resolutionProximityBonus,
         contrarianBonus,
         walletDormancyBonus,
+        clusterBonus,
       },
       multipliers: {
         marketSize: marketSizeMultiplier,
@@ -420,10 +438,11 @@ class AlertScorerService {
           resolutionProximityBonus,
           contrarianBonus,
           walletDormancyBonus,
+          clusterBonus,
         },
         multipliers: score.multipliers,
       },
-      '📊 Score breakdown (v5 - insider signals)'
+      '📊 Score breakdown (v6 - cluster detection)'
     );
 
     return score;
@@ -700,6 +719,19 @@ class AlertScorerService {
   }
 
   /**
+   * Get cluster bonus
+   * Multiple unique wallets piling into the same market+side in a short window
+   * suggests coordinated insider activity (e.g., one person using multiple wallets,
+   * or a group acting on the same non-public information).
+   */
+  private getClusterBonus(clusterWalletCount: number): number {
+    if (clusterWalletCount >= 8) return 20;
+    if (clusterWalletCount >= 5) return 15;
+    if (clusterWalletCount >= 3) return 10;
+    return 0;
+  }
+
+  /**
    * Get resolution proximity bonus
    * Insiders trade close to market resolution when their information is most valuable.
    * This is an additive bonus on top of the weighted score.
@@ -729,7 +761,7 @@ class AlertScorerService {
 
   /**
    * Classify final score
-   * Max possible: 60 (wallet) + 40 (impact) + 25 (resolution proximity) = 125, capped at 100
+   * Max possible: 60 (wallet) + 40 (impact) + 25 (resolution) + 20 (contrarian) + 15 (dormancy) + 20 (cluster) = 180, capped at 100
    * Thresholds now configurable via ALERT_THRESHOLD and LOG_THRESHOLD env vars
    */
   private classify(score: number): AlertClassification {
@@ -760,6 +792,7 @@ class AlertScorerService {
         resolutionProximityBonus: 0,
         contrarianBonus: 0,
         walletDormancyBonus: 0,
+        clusterBonus: 0,
       },
       multipliers: {
         marketSize: 1.0,

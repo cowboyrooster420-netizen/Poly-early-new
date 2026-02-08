@@ -178,6 +178,26 @@ class TelegramNotifierService {
     message += `• Wallet (60%): ${alert.scoreBreakdown.walletContribution}pts (raw: ${alert.scoreBreakdown.walletScore})\n`;
     message += `• Impact (40%): ${alert.scoreBreakdown.impactContribution}pts (raw: ${alert.scoreBreakdown.impactScore})\n`;
 
+    // Show active bonuses
+    const bonuses: string[] = [];
+    if (alert.scoreBreakdown.resolutionProximityBonus > 0) {
+      bonuses.push(
+        `⏰ Resolution +${alert.scoreBreakdown.resolutionProximityBonus}`
+      );
+    }
+    if (alert.scoreBreakdown.contrarianBonus > 0) {
+      bonuses.push(`🎯 Contrarian +${alert.scoreBreakdown.contrarianBonus}`);
+    }
+    if (alert.scoreBreakdown.walletDormancyBonus > 0) {
+      bonuses.push(`😴 Dormancy +${alert.scoreBreakdown.walletDormancyBonus}`);
+    }
+    if (alert.scoreBreakdown.clusterBonus > 0) {
+      bonuses.push(`🔗 Cluster +${alert.scoreBreakdown.clusterBonus}`);
+    }
+    if (bonuses.length > 0) {
+      message += `• Bonuses: ${bonuses.join(', ')}\n`;
+    }
+
     // Show active multipliers
     const multipliers: string[] = [];
     if (alert.scoreBreakdown && 'marketSize' in alert.scoreBreakdown) {

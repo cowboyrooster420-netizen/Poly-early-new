@@ -478,6 +478,47 @@ class TradeService {
   }
 
   /**
+   * Count distinct wallets that traded the same market + same side recently.
+   * A high count suggests coordinated activity (multiple insiders or one person splitting wallets).
+   */
+  private async getClusterWalletCount(
+    marketId: string,
+    side: string,
+    outcome: string,
+    excludeWallet: string,
+    tradeTimestamp: number
+  ): Promise<number> {
+    try {
+      const prisma = db.getClient();
+      const CLUSTER_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
+      const cutoff = new Date(tradeTimestamp - CLUSTER_WINDOW_MS);
+
+      const result = await prisma.trade.findMany({
+        where: {
+          marketId,
+          side,
+          outcome,
+          taker: { not: excludeWallet },
+          timestamp: { gte: cutoff },
+        },
+        select: { taker: true },
+        distinct: ['taker'],
+      });
+
+      return result.length;
+    } catch (error) {
+      logger.warn(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          marketId,
+        },
+        'Failed to get cluster wallet count'
+      );
+      return 0;
+    }
+  }
+
+  /**
    * Detect insider signals from trade
    */
   private async detectSignals(
@@ -630,13 +671,36 @@ class TradeService {
         '🔍 Wallet fingerprint analyzed'
       );
 
-      // Step 3: Calculate confidence score (v2 - tiered with multipliers)
+      // Step 3a: Check for coordinated cluster activity
+      const clusterWalletCount = await this.getClusterWalletCount(
+        trade.marketId,
+        trade.side,
+        trade.outcome,
+        walletAddress,
+        trade.timestamp
+      );
+
+      if (clusterWalletCount >= 3) {
+        logger.info(
+          {
+            tradeId: trade.id,
+            marketId: trade.marketId,
+            side: trade.side,
+            outcome: trade.outcome,
+            clusterWalletCount,
+          },
+          '🔗 Cluster detected: multiple wallets trading same direction'
+        );
+      }
+
+      // Step 3b: Calculate confidence score (v2 - tiered with multipliers)
       const entryProbability = parseFloat(trade.price); // Price is the probability
       const alertScore = await alertScorer.calculateScore({
         tradeSignal: signal,
         walletFingerprint,
         entryProbability,
         marketEndDate,
+        clusterWalletCount,
       });
 
       // Check if filtered out by hard filters
