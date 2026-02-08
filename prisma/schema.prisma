@@ -246,6 +246,8 @@ model Alert {
   @@index([timestamp, dismissed])
   @@index([walletAddress, timestamp])
   @@index([classification, dismissed])
+  // Prevent duplicate alerts for same wallet+market within short time windows
+  @@unique([walletAddress, marketId, tradeSize, timestamp])
   @@map("alerts")
 }
 

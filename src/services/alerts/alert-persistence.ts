@@ -47,13 +47,44 @@ class AlertPersistenceService {
   }
 
   /**
-   * Persist alert to database
+   * Dedup window: skip alert if same wallet+market already alerted within this period
+   */
+  private readonly DEDUP_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+  /**
+   * Persist alert to database (with deduplication)
    */
   public async createAlert(data: AlertData): Promise<void> {
     try {
-      await db.executeTransaction(async (prisma: PrismaClient) => {
+      // Dedup check: has this wallet+market combo already been alerted recently?
+      const prisma = db.getClient();
+      const cutoff = new Date(data.timestamp.getTime() - this.DEDUP_WINDOW_MS);
+      const existing = await prisma.alert.findFirst({
+        where: {
+          walletAddress: data.walletAddress,
+          marketId: data.marketId,
+          timestamp: { gte: cutoff },
+        },
+        select: { id: true, tradeId: true },
+      });
+
+      if (existing) {
+        logger.info(
+          {
+            tradeId: data.tradeId,
+            existingTradeId: existing.tradeId,
+            existingAlertId: existing.id,
+            wallet: data.walletAddress.substring(0, 10) + '...',
+            marketId: data.marketId,
+          },
+          '🔇 Duplicate alert suppressed (same wallet+market within 2h window)'
+        );
+        return;
+      }
+
+      await db.executeTransaction(async (txPrisma: PrismaClient) => {
         // Create alert record
-        await prisma.alert.create({
+        await txPrisma.alert.create({
           data: {
             tradeId: data.tradeId,
             marketId: data.marketId,

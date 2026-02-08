@@ -2,6 +2,7 @@ import { polymarketDataApi, type DataApiTrade } from './data-api-client.js';
 import { tradeService } from './trade-service.js';
 import { marketService } from './market-service.js';
 import { polymarketSubgraph } from './subgraph-client.js';
+import { redis } from '../cache/redis.js';
 import { logger } from '../../utils/logger.js';
 import type { PolymarketTrade } from '../../types/index.js';
 
@@ -15,13 +16,16 @@ class TradePollingService {
   private isRunning = false;
   private pollInterval: NodeJS.Timeout | null = null;
   private lastPollTimestamp: number = Date.now();
-  // Map of trade ID -> timestamp when processed (for proper time-based cleanup)
-  private processedTradeIds = new Map<string, number>();
+  // Redis key prefix for processed trade dedup
+  private readonly REDIS_DEDUP_PREFIX = 'trade:dedup:';
+  // TTL for dedup keys in Redis (4 hours — long enough to survive multiple poll cycles)
+  private readonly DEDUP_TTL_SECONDS = 4 * 60 * 60;
+  // In-memory fallback if Redis is unavailable
+  private processedTradeIdsFallback = new Map<string, number>();
+  private readonly MAX_FALLBACK_IDS = 10000;
   // Poll interval configurable via env var (default 60 seconds to reduce Goldsky load)
   private readonly POLL_INTERVAL_MS =
     Number(process.env['TRADE_POLL_INTERVAL_MS']) || 60000;
-  private readonly MAX_PROCESSED_IDS = 10000; // Prevent memory leak
-  private readonly PROCESSED_ID_TTL_MS = 30 * 60 * 1000; // 30 minutes TTL for processed IDs
   // Pre-queue filter: skip trades below this USD value to reduce queue pressure
   // Set to 0 to disable pre-filtering
   private readonly MIN_TRADE_USD_PREFILTER =
@@ -97,7 +101,7 @@ class TradePollingService {
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
           lastPollTimestamp: this.lastPollTimestamp,
-          processedTradeCount: this.processedTradeIds.size,
+          processedTradeCount: this.processedTradeIdsFallback.size,
         },
         '🚨 Trade polling failed unexpectedly - will retry on next interval'
       );
@@ -213,8 +217,8 @@ class TradePollingService {
               trade.transactionHash ||
               `${trade.timestamp}-${trade.proxyWallet}`;
 
-            // Skip if already processed
-            if (this.processedTradeIds.has(tradeKey)) {
+            // Skip if already processed (check Redis first, fallback to memory)
+            if (await this.isTradeProcessed(tradeKey)) {
               continue;
             }
 
@@ -239,7 +243,7 @@ class TradePollingService {
                 '⏭️ Skipping old trade (older than max age)'
               );
               // Mark as processed so we don't see it again
-              this.processedTradeIds.set(tradeKey, Date.now());
+              await this.markTradeProcessed(tradeKey);
               continue;
             }
 
@@ -270,8 +274,8 @@ class TradePollingService {
               );
             }
 
-            // Mark as processed with current timestamp
-            this.processedTradeIds.set(tradeKey, Date.now());
+            // Mark as processed in Redis (with TTL)
+            await this.markTradeProcessed(tradeKey);
           } catch (tradeError) {
             logger.error(
               {
@@ -310,8 +314,8 @@ class TradePollingService {
           await new Promise((resolve) => setTimeout(resolve, adaptiveDelay));
         }
 
-        // Clean up old IDs to prevent memory leak (time-based + size-based)
-        this.cleanupProcessedIds();
+        // Clean up fallback memory map if used
+        this.cleanupFallbackIds();
       }
 
       if (newTradesCount > 0) {
@@ -353,56 +357,64 @@ class TradePollingService {
   }
 
   /**
-   * Clean up old processed trade IDs to prevent memory leak
-   * Uses both time-based (TTL) and size-based cleanup for robustness
+   * Check if a trade has already been processed (Redis with in-memory fallback)
    */
-  private cleanupProcessedIds(): void {
-    const now = Date.now();
-    const sizeBefore = this.processedTradeIds.size;
-    let expiredCount = 0;
+  private async isTradeProcessed(tradeKey: string): Promise<boolean> {
+    try {
+      const exists = await redis.exists(
+        `${this.REDIS_DEDUP_PREFIX}${tradeKey}`
+      );
+      return exists;
+    } catch {
+      // Redis unavailable — fall back to in-memory map
+      return this.processedTradeIdsFallback.has(tradeKey);
+    }
+  }
 
-    // First pass: remove expired entries (older than TTL)
-    for (const [id, timestamp] of this.processedTradeIds) {
-      if (now - timestamp > this.PROCESSED_ID_TTL_MS) {
-        this.processedTradeIds.delete(id);
-        expiredCount++;
-      }
+  /**
+   * Mark a trade as processed in Redis (with TTL) and in-memory fallback
+   */
+  private async markTradeProcessed(tradeKey: string): Promise<void> {
+    // Always write to fallback map (cheap insurance)
+    this.processedTradeIdsFallback.set(tradeKey, Date.now());
+
+    try {
+      await redis.set(
+        `${this.REDIS_DEDUP_PREFIX}${tradeKey}`,
+        '1',
+        this.DEDUP_TTL_SECONDS
+      );
+    } catch {
+      // Redis unavailable — already in fallback map, continue
+    }
+  }
+
+  /**
+   * Clean up in-memory fallback map (only used when Redis is down)
+   */
+  private cleanupFallbackIds(): void {
+    if (this.processedTradeIdsFallback.size <= this.MAX_FALLBACK_IDS) {
+      return;
     }
 
-    // Second pass: if still over limit, remove oldest entries
-    if (this.processedTradeIds.size > this.MAX_PROCESSED_IDS) {
-      // Convert to array sorted by timestamp (oldest first)
-      const entries = Array.from(this.processedTradeIds.entries()).sort(
-        (a, b) => a[1] - b[1]
-      );
+    // Remove oldest entries until at half capacity
+    const entries = Array.from(this.processedTradeIdsFallback.entries()).sort(
+      (a, b) => a[1] - b[1]
+    );
+    const targetSize = Math.floor(this.MAX_FALLBACK_IDS / 2);
+    const toRemove = entries.slice(0, entries.length - targetSize);
 
-      // Remove oldest entries until we're at half capacity
-      const targetSize = Math.floor(this.MAX_PROCESSED_IDS / 2);
-      const toRemove = entries.slice(0, entries.length - targetSize);
-
-      for (const [id] of toRemove) {
-        this.processedTradeIds.delete(id);
-      }
-
-      logger.info(
-        {
-          sizeBefore,
-          sizeAfter: this.processedTradeIds.size,
-          expiredRemoved: expiredCount,
-          overflowRemoved: toRemove.length,
-        },
-        'Cleaned up processed trade IDs (size overflow)'
-      );
-    } else if (expiredCount > 0) {
-      logger.debug(
-        {
-          sizeBefore,
-          sizeAfter: this.processedTradeIds.size,
-          expiredRemoved: expiredCount,
-        },
-        'Cleaned up expired processed trade IDs'
-      );
+    for (const [id] of toRemove) {
+      this.processedTradeIdsFallback.delete(id);
     }
+
+    logger.debug(
+      {
+        removed: toRemove.length,
+        remaining: this.processedTradeIdsFallback.size,
+      },
+      'Cleaned up fallback processed trade IDs'
+    );
   }
 
   /**
@@ -496,7 +508,7 @@ class TradePollingService {
     return {
       isRunning: this.isRunning,
       lastPollTimestamp: this.lastPollTimestamp,
-      processedTradesCount: this.processedTradeIds.size,
+      processedTradesCount: this.processedTradeIdsFallback.size,
     };
   }
 }
