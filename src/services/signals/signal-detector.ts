@@ -115,7 +115,7 @@ class SignalDetector {
       const minOiPrefilterPct =
         Number(process.env['MIN_OI_PREFILTER_PCT']) || 1.0;
       const marketOI = parseFloat(marketData.openInterest);
-      if (marketOI > 0) {
+      if (isFinite(marketOI) && marketOI > 0) {
         const quickOiPct = (tradeUsdValue / marketOI) * 100;
         if (quickOiPct < minOiPrefilterPct) {
           logger.debug(
@@ -445,6 +445,10 @@ class SignalDetector {
     for (let i = 0; i < trades.length - 1; i++) {
       const currentPrice = parseFloat(trades[i]!.price.toString());
       const nextPrice = parseFloat(trades[i + 1]!.price.toString());
+
+      if (isNaN(currentPrice) || isNaN(nextPrice) || nextPrice === 0) {
+        continue;
+      }
 
       const priceChange = Math.abs(currentPrice - nextPrice);
       const percentChange = (priceChange / nextPrice) * 100;

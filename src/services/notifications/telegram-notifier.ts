@@ -198,21 +198,6 @@ class TelegramNotifierService {
       message += `• Bonuses: ${bonuses.join(', ')}\n`;
     }
 
-    // Show active multipliers
-    const multipliers: string[] = [];
-    if (alert.scoreBreakdown && 'marketSize' in alert.scoreBreakdown) {
-      // Access from the full alert score if available
-    }
-    // Check for multiplier boosts based on market size
-    if (marketOI < 25000) {
-      multipliers.push('🔥 Small market (2x)');
-    } else if (marketOI < 50000) {
-      multipliers.push('📈 Medium market (1.5x)');
-    }
-
-    if (multipliers.length > 0) {
-      message += `• Boosts: ${multipliers.join(', ')}\n`;
-    }
     message += `\n`;
 
     // Wallet analysis - Polymarket specific

@@ -1,4 +1,5 @@
 import { db, type PrismaClient } from '../database/prisma.js';
+import { redis } from '../cache/redis.js';
 import { notificationCoordinator } from '../notifications/notification-coordinator.js';
 import { logger } from '../../utils/logger.js';
 import type { AlertScore, AlertClassification } from './alert-scorer.js';
@@ -55,6 +56,38 @@ class AlertPersistenceService {
    * Persist alert to database (with deduplication)
    */
   public async createAlert(data: AlertData): Promise<void> {
+    // Acquire a short-lived Redis lock to prevent concurrent duplicate alerts
+    const lockKey = `alert:lock:${data.walletAddress}:${data.marketId}`;
+    const LOCK_TTL_SECONDS = 30;
+    let lockAcquired = false;
+
+    try {
+      const client = redis.getClient();
+      const result = await client.set(
+        lockKey,
+        '1',
+        'EX',
+        LOCK_TTL_SECONDS,
+        'NX'
+      );
+      lockAcquired = result === 'OK';
+    } catch {
+      // Redis unavailable — proceed without lock (DB unique constraint is the safety net)
+      lockAcquired = true;
+    }
+
+    if (!lockAcquired) {
+      logger.info(
+        {
+          tradeId: data.tradeId,
+          wallet: data.walletAddress.substring(0, 10) + '...',
+          marketId: data.marketId,
+        },
+        '🔇 Duplicate alert suppressed (concurrent lock held)'
+      );
+      return;
+    }
+
     try {
       // Dedup check: has this wallet+market combo already been alerted recently?
       const prisma = db.getClient();
@@ -152,9 +185,6 @@ class AlertPersistenceService {
         },
         '🚨 Alert created and persisted'
       );
-
-      // Send notifications to all configured channels
-      await notificationCoordinator.sendAlert(data);
     } catch (error) {
       logger.error(
         {
@@ -162,9 +192,45 @@ class AlertPersistenceService {
           tradeId: data.tradeId,
           marketId: data.marketId,
         },
-        'Failed to persist alert'
+        'Failed to persist alert to database'
       );
       throw error;
+    }
+
+    // Send notifications independently — DB persistence already succeeded above
+    try {
+      const result = await notificationCoordinator.sendAlert(data);
+
+      if (!result.anySuccess) {
+        logger.error(
+          {
+            tradeId: data.tradeId,
+            slack: result.slack,
+            telegram: result.telegram,
+            discord: result.discord,
+          },
+          '❌ Alert persisted but ALL notification channels failed'
+        );
+      } else if (!result.slack || !result.telegram || !result.discord) {
+        logger.warn(
+          {
+            tradeId: data.tradeId,
+            slack: result.slack,
+            telegram: result.telegram,
+            discord: result.discord,
+          },
+          '⚠️ Alert sent but some notification channels failed'
+        );
+      }
+    } catch (notifError) {
+      logger.error(
+        {
+          error: notifError,
+          tradeId: data.tradeId,
+          marketId: data.marketId,
+        },
+        '❌ Alert persisted but notification send threw an error'
+      );
     }
   }
 

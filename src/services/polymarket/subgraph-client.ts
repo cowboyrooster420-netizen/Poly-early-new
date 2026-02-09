@@ -791,18 +791,37 @@ class PolymarketSubgraphClient {
             variables: { address: normalizedAddress },
           });
 
-        // Check for errors
-        if (makerResponse.data.errors && makerResponse.data.errors.length > 0) {
+        // Check for errors — if GraphQL returned errors without data, bail out
+        const makerHasErrors =
+          makerResponse.data.errors && makerResponse.data.errors.length > 0;
+        const takerHasErrors =
+          takerResponse.data.errors && takerResponse.data.errors.length > 0;
+
+        if (makerHasErrors) {
           logger.warn(
             { errors: makerResponse.data.errors, address: normalizedAddress },
             'Orderbook subgraph maker query returned errors'
           );
         }
-        if (takerResponse.data.errors && takerResponse.data.errors.length > 0) {
+        if (takerHasErrors) {
           logger.warn(
             { errors: takerResponse.data.errors, address: normalizedAddress },
             'Orderbook subgraph taker query returned errors'
           );
+        }
+
+        // If both queries errored AND returned no data, don't proceed with empty results
+        if (
+          makerHasErrors &&
+          takerHasErrors &&
+          !makerResponse.data.data?.orderFilledEvents.length &&
+          !takerResponse.data.data?.orderFilledEvents.length
+        ) {
+          logger.error(
+            { address: normalizedAddress },
+            'Both CLOB queries returned errors with no data — aborting wallet analysis'
+          );
+          return null;
         }
 
         const makerTrades = makerResponse.data.data?.orderFilledEvents || [];

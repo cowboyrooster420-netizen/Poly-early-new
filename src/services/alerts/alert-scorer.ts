@@ -241,18 +241,18 @@ class AlertScorerService {
     // ----------------------------------
     // 1. VALIDATE INPUTS (prevent NaN propagation)
     // ----------------------------------
-    if (isNaN(openInterest) || openInterest <= 0) {
+    if (!isFinite(openInterest) || openInterest <= 0) {
       return this.createIgnoreResult(
         `Invalid open interest: ${tradeSignal.openInterest}`
       );
     }
-    if (isNaN(tradeUsdValue) || tradeUsdValue <= 0) {
+    if (!isFinite(tradeUsdValue) || tradeUsdValue <= 0) {
       return this.createIgnoreResult(
         `Invalid trade USD value: ${tradeUsdValue}`
       );
     }
     if (
-      isNaN(entryProbability) ||
+      !isFinite(entryProbability) ||
       entryProbability < 0 ||
       entryProbability > 1
     ) {
@@ -663,6 +663,13 @@ class AlertScorerService {
       }
 
       const lastTradeTime = parseInt(lastTradeStr, 10);
+      if (isNaN(lastTradeTime)) {
+        logger.warn(
+          { marketId, rawValue: lastTradeStr },
+          'Invalid last trade timestamp in Redis — using neutral multiplier'
+        );
+        return 1.0;
+      }
       const hoursSinceLastTrade =
         (tradeTimestamp - lastTradeTime) / (1000 * 60 * 60);
 

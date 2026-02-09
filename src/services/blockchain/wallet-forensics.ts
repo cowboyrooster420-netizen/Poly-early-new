@@ -805,13 +805,15 @@ class WalletForensicsService {
       normalizeVolume(partialData?.activity?.totalVolumeUSD, 'subgraph') ||
       0;
 
+    // When analysis fails, assume suspicious (fail-safe).
+    // All flags default to true because we cannot verify the wallet is clean.
     const walletFlags: WalletFlags = {
-      lowTradeCount: false,
-      youngAccount: false,
-      lowVolume: false,
-      highConcentration: false,
-      freshFatBet: false,
-      lowDiversification: false,
+      lowTradeCount: true,
+      youngAccount: true,
+      lowVolume: true,
+      highConcentration: false, // Can't determine without position data
+      freshFatBet: false, // Can't determine without trade context
+      lowDiversification: true,
     };
 
     const dataSource: 'cache' | 'data-api' = dataCompleteness.cache

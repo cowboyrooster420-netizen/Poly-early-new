@@ -177,8 +177,12 @@ export class HealthMonitor {
         .filter(([key]) => key.startsWith('filtered_'))
         .reduce((sum, [_, value]) => sum + value, 0);
 
+      // If stats are all zero, signal detector may be silently failing
+      const status =
+        totalAnalyzed === 0 && totalFiltered === 0 ? 'degraded' : 'up';
+
       return {
-        status: 'up',
+        status,
         details: {
           tradesAnalyzed: totalAnalyzed,
           tradesFiltered: totalFiltered,

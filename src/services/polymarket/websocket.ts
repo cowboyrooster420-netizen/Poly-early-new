@@ -447,13 +447,18 @@ class PolymarketWebSocketService {
       // Convert Polymarket message to our trade format
       // Note: WebSocket trades have potentially incorrect size (order size vs taker fill size)
       // Signal detection only runs on subgraph trades which have accurate amounts
+      const parsedTimestamp = msg.timestamp ? parseInt(msg.timestamp, 10) : NaN;
+      const tradeTimestamp = isFinite(parsedTimestamp)
+        ? parsedTimestamp
+        : Date.now();
+
       const trade: PolymarketTrade = {
-        id: `ws-${msg.asset_id || msg.market}-${msg.timestamp || Date.now()}`,
+        id: `ws-${msg.asset_id || msg.market}-${tradeTimestamp}`,
         marketId: msg.asset_id || msg.market || '',
         side: msg.side === 'BUY' ? 'buy' : 'sell',
         size: msg.size || '0',
         price: msg.price || '0',
-        timestamp: msg.timestamp ? parseInt(msg.timestamp, 10) : Date.now(),
+        timestamp: tradeTimestamp,
         maker,
         taker,
         outcome: 'yes', // Will be determined by asset_id mapping
@@ -586,6 +591,14 @@ class PolymarketWebSocketService {
         type: 'market',
       };
 
+      if (this.ws.readyState !== 1) {
+        logger.error(
+          { readyState: this.ws.readyState, assetCount: assetIds.length },
+          '❌ WebSocket not in OPEN state — subscription will be lost'
+        );
+        return;
+      }
+
       this.ws.send(JSON.stringify(message));
       logger.info(
         {
@@ -595,7 +608,10 @@ class PolymarketWebSocketService {
         'Sent subscription message to Polymarket WebSocket'
       );
     } catch (error) {
-      logger.error({ error }, 'Failed to send subscription message');
+      logger.error(
+        { error, assetCount: this.subscribedMarkets.size },
+        '❌ Failed to send subscription message — trades for these markets will be missed'
+      );
     }
   }
 }

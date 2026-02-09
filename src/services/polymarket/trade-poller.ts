@@ -249,32 +249,36 @@ class TradePollingService {
 
             // Convert Data API trade to our format
             const polyTrade = this.convertDataApiTrade(trade);
-            if (polyTrade) {
-              // USD value is already filtered by Data API if MIN_TRADE_USD_PREFILTER > 0
-              const tradeUsdValue = trade.size * trade.price;
-
-              logger.info(
-                {
-                  tradeId: polyTrade.id,
-                  marketId: polyTrade.marketId,
-                  size: polyTrade.size,
-                  price: polyTrade.price,
-                  tradeUsdValue: tradeUsdValue.toFixed(2),
-                  side: polyTrade.side,
-                  outcome: polyTrade.outcome,
-                  taker: polyTrade.taker.substring(0, 10) + '...',
-                },
-                '📤 Sending trade to trade service (from Data API)'
-              );
-              await tradeService.processTrade(polyTrade);
-              newTradesCount++;
-              logger.info(
-                { tradeId: polyTrade.id },
-                '✅ Trade sent to service successfully'
-              );
+            if (!polyTrade) {
+              // Conversion failed (unmonitored market, bad price, invalid outcome)
+              // Do NOT mark as processed — market may be added later or data may improve
+              continue;
             }
 
-            // Mark as processed in Redis (with TTL)
+            // USD value is already filtered by Data API if MIN_TRADE_USD_PREFILTER > 0
+            const tradeUsdValue = trade.size * trade.price;
+
+            logger.info(
+              {
+                tradeId: polyTrade.id,
+                marketId: polyTrade.marketId,
+                size: polyTrade.size,
+                price: polyTrade.price,
+                tradeUsdValue: tradeUsdValue.toFixed(2),
+                side: polyTrade.side,
+                outcome: polyTrade.outcome,
+                taker: polyTrade.taker.substring(0, 10) + '...',
+              },
+              '📤 Sending trade to trade service (from Data API)'
+            );
+            await tradeService.processTrade(polyTrade);
+            newTradesCount++;
+            logger.info(
+              { tradeId: polyTrade.id },
+              '✅ Trade sent to service successfully'
+            );
+
+            // Only mark as processed after successful processing
             await this.markTradeProcessed(tradeKey);
           } catch (tradeError) {
             logger.error(

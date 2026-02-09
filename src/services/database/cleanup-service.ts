@@ -67,11 +67,17 @@ class CleanupService {
   public async runCleanup(): Promise<{ tradesDeleted: number }> {
     logger.info('Starting database cleanup...');
 
-    const tradesDeleted = await this.pruneOldTrades();
-
-    logger.info({ tradesDeleted }, 'Database cleanup complete');
-
-    return { tradesDeleted };
+    try {
+      const tradesDeleted = await this.pruneOldTrades();
+      logger.info({ tradesDeleted }, 'Database cleanup complete');
+      return { tradesDeleted };
+    } catch (error) {
+      logger.error(
+        { error },
+        '❌ Database cleanup FAILED — stale data may accumulate'
+      );
+      return { tradesDeleted: -1 };
+    }
   }
 
   /**
@@ -107,7 +113,7 @@ class CleanupService {
       return result.count;
     } catch (error) {
       logger.error({ error }, 'Failed to prune old trades');
-      return 0;
+      throw error;
     }
   }
 

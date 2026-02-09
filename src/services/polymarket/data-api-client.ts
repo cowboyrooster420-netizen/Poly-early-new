@@ -321,12 +321,13 @@ class PolymarketDataApiClient {
         try {
           return await Promise.race([fetchPromise, timeoutPromise]);
         } catch (error) {
-          logger.warn(
+          logger.error(
             {
               error: error instanceof Error ? error.message : String(error),
               conditionIdsCount: batchConditionIds.length,
+              conditionIds: batchConditionIds.slice(0, 5),
             },
-            'Batch request failed or timed out, returning empty array'
+            '🚨 Data API batch failed — trades in this batch will be missed until next poll'
           );
           return [];
         }
