@@ -132,6 +132,14 @@ async function main(): Promise<void> {
     void tradeService.processTrade(trade);
   });
 
+  // Use WebSocket as a fast trigger for immediate Data API fetches
+  polymarketWs.onMarketActivity((assetId) => {
+    const market = marketService.getMarketByAssetId(assetId);
+    if (market?.conditionId) {
+      void tradePoller.triggerMarketFetch(market.conditionId);
+    }
+  });
+
   // Initialize market service and subscribe to markets
   try {
     await marketService.initialize();

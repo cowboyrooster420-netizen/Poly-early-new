@@ -65,6 +65,12 @@ class PolymarketWebSocketService {
   private pongTimeout: NodeJS.Timeout | null = null;
   private subscribedMarkets: Set<string> = new Set();
   private tradeHandlers: Array<(trade: PolymarketTrade) => void> = [];
+  private marketActivityHandlers: Array<
+    (
+      assetId: string,
+      tradeInfo: { price: string; size: string; side: string }
+    ) => void
+  > = [];
   private static readonly MAX_TRADE_HANDLERS = 100;
 
   private constructor() {
@@ -271,6 +277,43 @@ class PolymarketWebSocketService {
   }
 
   /**
+   * Register a handler for market activity (fires for every trade event, regardless of taker address)
+   */
+  public onMarketActivity(
+    handler: (
+      assetId: string,
+      tradeInfo: { price: string; size: string; side: string }
+    ) => void
+  ): void {
+    if (this.marketActivityHandlers.includes(handler)) {
+      logger.warn(
+        'Attempted to add duplicate market activity handler, ignoring'
+      );
+      return;
+    }
+    this.marketActivityHandlers.push(handler);
+    logger.debug(
+      { handlerCount: this.marketActivityHandlers.length },
+      'Market activity handler registered'
+    );
+  }
+
+  /**
+   * Remove a market activity handler
+   */
+  public offMarketActivity(
+    handler: (
+      assetId: string,
+      tradeInfo: { price: string; size: string; side: string }
+    ) => void
+  ): void {
+    const index = this.marketActivityHandlers.indexOf(handler);
+    if (index > -1) {
+      this.marketActivityHandlers.splice(index, 1);
+    }
+  }
+
+  /**
    * Get connection status
    */
   public getStatus(): {
@@ -428,6 +471,23 @@ class PolymarketWebSocketService {
         (rawMsg['taker'] as string) ||
         '';
       const transactionHash = (rawMsg['transaction_hash'] as string) || '';
+
+      // Fire market activity handlers for every trade (regardless of taker)
+      // This allows the trade poller to immediately fetch from Data API
+      if (msg.asset_id) {
+        const tradeInfo = {
+          price: msg.price || '0',
+          size: msg.size || '0',
+          side: msg.side || 'BUY',
+        };
+        for (const handler of this.marketActivityHandlers) {
+          try {
+            handler(msg.asset_id, tradeInfo);
+          } catch (error) {
+            logger.error({ error }, 'Error in market activity handler');
+          }
+        }
+      }
 
       // Skip trades without taker address - we can't identify the user
       // WebSocket currently doesn't provide maker/taker addresses

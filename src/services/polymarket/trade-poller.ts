@@ -40,6 +40,10 @@ class TradePollingService {
     Number(process.env['MAX_TRADE_AGE_MINUTES']) || 720; // 12 hours
   // Track if this is the first poll (for startup filtering)
   private isFirstPoll = true;
+  // Debounce map for priority fetches (conditionId → last fetch timestamp)
+  private priorityFetchDebounce = new Map<string, number>();
+  // Minimum interval between priority fetches for the same market
+  private readonly PRIORITY_FETCH_DEBOUNCE_MS = 15000; // 15 seconds
 
   private constructor() {
     logger.info(
@@ -123,6 +127,127 @@ class TradePollingService {
     }
 
     logger.info('Stopped trade polling service');
+  }
+
+  /**
+   * Trigger an immediate fetch for a specific market's trades from the Data API.
+   * Called by WebSocket market activity handler for near-real-time detection.
+   * Fire-and-forget — errors are logged but never thrown.
+   */
+  public async triggerMarketFetch(conditionId: string): Promise<void> {
+    try {
+      // Debounce: skip if we already fetched this market recently
+      const now = Date.now();
+      const lastFetch = this.priorityFetchDebounce.get(conditionId);
+      if (lastFetch && now - lastFetch < this.PRIORITY_FETCH_DEBOUNCE_MS) {
+        logger.debug(
+          { conditionId, msSinceLastFetch: now - lastFetch },
+          'Skipping priority fetch — debounced'
+        );
+        return;
+      }
+
+      // Check backpressure — skip if system is overwhelmed
+      const queueStats = tradeService.getQueueStats();
+      if (queueStats.isUnderPressure) {
+        logger.warn(
+          {
+            conditionId,
+            queuePercentage: queueStats.queuePercentage.toFixed(1),
+          },
+          'Skipping priority fetch — queue under pressure'
+        );
+        return;
+      }
+
+      const subgraphStatus = polymarketSubgraph.getRateLimiterStatus();
+      if (subgraphStatus.isBackingOff) {
+        logger.warn(
+          { conditionId },
+          'Skipping priority fetch — subgraph rate limiter backing off'
+        );
+        return;
+      }
+
+      // Update debounce timestamp before the fetch
+      this.priorityFetchDebounce.set(conditionId, now);
+
+      // Fetch recent trades for this single market
+      const trades = await polymarketDataApi.getRecentTradesForMarkets(
+        [conditionId],
+        50,
+        this.MIN_TRADE_USD_PREFILTER > 0
+          ? this.MIN_TRADE_USD_PREFILTER
+          : undefined
+      );
+
+      if (trades.length === 0) {
+        logger.debug({ conditionId }, 'Priority fetch returned no trades');
+        return;
+      }
+
+      // Process trades using the same dedup + conversion + processing as pollTrades
+      let newTradesCount = 0;
+      for (const trade of trades) {
+        const tradeKey =
+          trade.transactionHash || `${trade.timestamp}-${trade.proxyWallet}`;
+
+        if (await this.isTradeProcessed(tradeKey)) {
+          continue;
+        }
+
+        // Skip trades older than MAX_TRADE_AGE_MINUTES
+        const timestampMs =
+          trade.timestamp > 1e12 ? trade.timestamp : trade.timestamp * 1000;
+        const tradeAgeMs = Date.now() - timestampMs;
+        const maxAgeMs = this.MAX_TRADE_AGE_MINUTES * 60 * 1000;
+
+        if (tradeAgeMs > maxAgeMs) {
+          await this.markTradeProcessed(tradeKey);
+          continue;
+        }
+
+        const polyTrade = this.convertDataApiTrade(trade);
+        if (!polyTrade) {
+          continue;
+        }
+
+        logger.info(
+          {
+            tradeId: polyTrade.id,
+            marketId: polyTrade.marketId,
+            size: polyTrade.size,
+            price: polyTrade.price,
+            side: polyTrade.side,
+            taker: polyTrade.taker.substring(0, 10) + '...',
+          },
+          'Priority fetch: sending trade to trade service'
+        );
+        await tradeService.processTrade(polyTrade);
+        newTradesCount++;
+        await this.markTradeProcessed(tradeKey);
+      }
+
+      if (newTradesCount > 0) {
+        logger.info(
+          { conditionId, newTradesCount, totalFetched: trades.length },
+          'Priority fetch: processed new trades'
+        );
+      } else {
+        logger.debug(
+          { conditionId, totalFetched: trades.length },
+          'Priority fetch: all trades already processed'
+        );
+      }
+    } catch (error) {
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          conditionId,
+        },
+        'Priority fetch failed'
+      );
+    }
   }
 
   /**
